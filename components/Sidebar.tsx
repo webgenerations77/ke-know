@@ -26,7 +26,7 @@ export function Sidebar() {
     <nav className="flex flex-col h-full">
       <div className="px-4 py-5 border-b border-[#2a2a2e]">
         <span className="text-lg font-bold text-crimson">KE-KNOW</span>
-        <p className="text-xs text-slate-500 mt-0.5">Maryland Keno Research</p>
+        <p className="text-xs text-slate-500 mt-0.5">MD Keno Predictor</p>
       </div>
       <ul className="flex-1 py-4 overflow-y-auto">
         {NAV.map(({ href, label, icon }) => {

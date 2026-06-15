@@ -4,8 +4,8 @@ import { Sidebar } from '@/components/Sidebar';
 import { ToastProvider } from '@/components/Toast';
 
 export const metadata: Metadata = {
-  title: 'Ke-Know — Maryland Keno Research',
-  description: 'Personal Maryland Keno draw analysis and pick advisor',
+  title: 'MD Keno Predictor',
+  description: 'Maryland Keno prediction engine — draw analysis, picks, and live session tracking',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
