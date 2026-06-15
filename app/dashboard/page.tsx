@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine,
@@ -10,6 +10,7 @@ import { computeNumberStats } from '@/lib/analysis';
 import { computePrediction, computeMomentum, DOW_LABELS } from '@/lib/prediction-engine';
 
 const CRIMSON = '#8B1A4A';
+const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function StatCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
@@ -21,21 +22,46 @@ function StatCard({ label, value, sub, accent }: { label: string; value: string;
   );
 }
 
+const WINDOW_OPTIONS = [
+  { label: '100', value: 100 },
+  { label: '500', value: 500 },
+  { label: '1,000', value: 1000 },
+  { label: '2,500', value: 2500 },
+  { label: '5,000', value: 5000 },
+];
+
 export default function DashboardPage() {
   const [games, setGames] = useState<Game[]>([]);
+  const [totalDbCount, setTotalDbCount] = useState(0);
   const [syncLog, setSyncLog] = useState<SyncLog[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Filters
+  const [windowSize, setWindowSize] = useState(5000);
+  const [dowFilter, setDowFilter] = useState<number | null>(null);
+
   useEffect(() => {
     Promise.all([
+      // Real count — separate from the data fetch so it's never capped
+      supabase.from('games').select('*', { count: 'exact', head: true }),
       supabase.from('games').select('*').order('game_num', { ascending: false }).limit(5000),
       supabase.from('sync_log').select('*').order('synced_at', { ascending: false }).limit(10),
-    ]).then(([{ data: gData }, { data: sData }]) => {
+    ]).then(([{ count }, { data: gData }, { data: sData }]) => {
+      setTotalDbCount(count ?? 0);
       if (gData) setGames(gData as Game[]);
       if (sData) setSyncLog(sData as SyncLog[]);
       setLoading(false);
     });
   }, []);
+
+  // Apply window + DOW filter
+  const filteredGames = useMemo(() => {
+    // games is already sorted newest-first; slice gives the most recent N
+    const windowed = games.slice(0, windowSize);
+    return dowFilter !== null ? windowed.filter(g => g.draw_dow === dowFilter) : windowed;
+  }, [games, windowSize, dowFilter]);
+
+  const activeFilter = dowFilter !== null || windowSize !== 5000;
 
   if (loading) return <div className="text-slate-500 pt-8">Loading…</div>;
 
@@ -45,221 +71,314 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <div className="bg-surface rounded-xl p-8 text-center text-slate-500">
           <p className="text-lg font-medium text-slate-300 mb-2">No data yet</p>
-          <p className="text-sm">Go to <strong>Data Ingestion</strong> to run the backfill and populate the database.</p>
+          <p className="text-sm">Go to <strong>Data Ingestion</strong> to run the backfill.</p>
         </div>
       </div>
     );
   }
 
-  // ── Core computations ───────────────────────────────────────────────────────
-  const sortedAsc = [...games].sort((a, b) => a.game_num - b.game_num);
-  const sortedDesc = [...games].sort((a, b) => b.game_num - a.game_num);
+  // ── Computations on filtered data ────────────────────────────────────────────
+  const sortedAsc = [...filteredGames].sort((a, b) => a.game_num - b.game_num);
+  const sortedDesc = [...filteredGames].sort((a, b) => b.game_num - a.game_num);
   const newestDate = sortedDesc[0]?.draw_date ?? '—';
   const oldestDate = sortedAsc[0]?.draw_date ?? '—';
   const dayRange = Math.max(1, (new Date(newestDate).getTime() - new Date(oldestDate).getTime()) / 86400000);
-  const avgPerDay = +(games.length / dayRange).toFixed(1);
+  const avgPerDay = +(filteredGames.length / dayRange).toFixed(1);
 
-  const stats = computeNumberStats(games);
-  const prediction = computePrediction(games, 8);
-  const momentum = computeMomentum(games);
+  const stats = computeNumberStats(filteredGames);
+  const prediction = filteredGames.length >= 50 ? computePrediction(filteredGames, 8) : null;
+  const momentum = filteredGames.length >= 50 ? computeMomentum(filteredGames) : [];
 
-  // Sync health
+  // Sync health (always from full data, not filtered)
   const lastSync = syncLog[0];
   const syncAgeMs = lastSync ? Date.now() - new Date(lastSync.synced_at).getTime() : null;
   const syncAgeMins = syncAgeMs ? Math.round(syncAgeMs / 60000) : null;
-  const syncHealth =
-    syncAgeMins === null ? 'Unknown'
-    : syncAgeMins < 90 ? 'Current'
-    : syncAgeMins < 180 ? 'Slightly stale'
-    : 'Stale — sync needed';
-  const syncColor =
-    syncAgeMins === null ? 'text-slate-400'
-    : syncAgeMins < 90 ? 'text-green-400'
-    : syncAgeMins < 180 ? 'text-yellow-400'
-    : 'text-red-400';
+  const syncHealth = syncAgeMins === null ? 'Unknown' : syncAgeMins < 90 ? 'Current' : syncAgeMins < 360 ? 'Slightly stale' : 'Stale';
+  const syncColor = syncAgeMins === null ? 'text-slate-400' : syncAgeMins < 90 ? 'text-green-400' : syncAgeMins < 360 ? 'text-yellow-400' : 'text-red-400';
 
-  // ── Prediction accuracy trend ───────────────────────────────────────────────
-  // Check how many of the current top-20 appeared in each of the last 50 draws
+  // Top-20 hit rate over last 50 filtered draws
   const top20Nums = new Set(stats.slice(0, 20).map(s => s.number));
   const recentAccuracy = sortedDesc.slice(0, 50).map((g, i) => ({
     game: sortedDesc.length - i,
     hits: g.hits.filter(h => top20Nums.has(h)).length,
-    label: g.draw_date,
   })).reverse();
-  const avgAccuracy = recentAccuracy.reduce((s, r) => s + r.hits, 0) / recentAccuracy.length;
+  const avgAccuracy = recentAccuracy.length
+    ? recentAccuracy.reduce((s, r) => s + r.hits, 0) / recentAccuracy.length
+    : 0;
 
-  // ── Number momentum: top 5 rising and top 5 falling ────────────────────────
-  const rising = momentum
-    .filter(m => m.trend === 'rising')
-    .sort((a, b) => b.momentumNorm - a.momentumNorm)
-    .slice(0, 5);
-  const falling = momentum
-    .filter(m => m.trend === 'falling')
-    .sort((a, b) => a.momentumNorm - b.momentumNorm)
-    .slice(0, 5);
-
+  // Momentum chart data
+  const rising = momentum.filter(m => m.trend === 'rising').sort((a, b) => b.momentumNorm - a.momentumNorm).slice(0, 5);
+  const falling = momentum.filter(m => m.trend === 'falling').sort((a, b) => a.momentumNorm - b.momentumNorm).slice(0, 5);
   const momentumChartData = [
     ...rising.map(m => ({ number: m.number, value: m.recentCount - m.priorCount, type: 'rising' })),
     ...falling.map(m => ({ number: m.number, value: m.recentCount - m.priorCount, type: 'falling' })),
   ].sort((a, b) => b.value - a.value);
 
-  // ── Recent draws (last 8) ────────────────────────────────────────────────────
+  // Recent draws for display
   const recentDraws = sortedDesc.slice(0, 8);
 
-  // ── Today's top picks ───────────────────────────────────────────────────────
-  const topPicks = prediction.picks.slice(0, 6);
+  const topPicks = prediction?.picks.slice(0, 6) ?? [];
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        {activeFilter && (
+          <button
+            onClick={() => { setWindowSize(5000); setDowFilter(null); }}
+            className="text-xs text-crimson hover:underline"
+          >
+            Clear filters ✕
+          </button>
+        )}
+      </div>
 
-      {/* Core summary metrics */}
+      {/* ── Filter Bar ─────────────────────────────────────────────────────── */}
+      <div className="bg-surface rounded-xl p-4 space-y-3">
+        <div className="flex flex-wrap gap-6">
+          {/* Analysis window */}
+          <div>
+            <div className="text-xs text-slate-500 mb-2">Analysis Window (most recent games)</div>
+            <div className="flex gap-1 flex-wrap">
+              {WINDOW_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setWindowSize(opt.value)}
+                  disabled={totalDbCount < opt.value}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                    windowSize === opt.value
+                      ? 'bg-crimson text-white'
+                      : 'bg-[#0e0e10] text-slate-400 border border-[#333] hover:text-white'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Day of week */}
+          <div>
+            <div className="text-xs text-slate-500 mb-2">Day of Week</div>
+            <div className="flex gap-1 flex-wrap">
+              <button
+                onClick={() => setDowFilter(null)}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                  dowFilter === null
+                    ? 'bg-crimson text-white'
+                    : 'bg-[#0e0e10] text-slate-400 border border-[#333] hover:text-white'
+                }`}
+              >
+                All Days
+              </button>
+              {DOW_SHORT.map((d, i) => (
+                <button
+                  key={i}
+                  onClick={() => setDowFilter(dowFilter === i ? null : i)}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                    dowFilter === i
+                      ? 'bg-crimson text-white'
+                      : 'bg-[#0e0e10] text-slate-400 border border-[#333] hover:text-white'
+                  }`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Active filter summary */}
+        {activeFilter && (
+          <div className="text-xs text-slate-400 pt-1 border-t border-[#1e1e24]">
+            Analyzing <strong className="text-white">{filteredGames.length.toLocaleString()}</strong> games
+            {dowFilter !== null ? ` on ${DOW_LABELS[dowFilter]}s` : ''}
+            {` from last ${windowSize.toLocaleString()} draws`}
+          </div>
+        )}
+      </div>
+
+      {/* ── Summary metrics ─────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Games in DB" value={games.length.toLocaleString()} sub={`${oldestDate} → ${newestDate}`} />
-        <StatCard label="Avg Draws / Day" value={avgPerDay.toString()} sub="based on full date range" />
+        <StatCard
+          label="Games in DB"
+          value={totalDbCount.toLocaleString()}
+          sub={`Analyzing ${filteredGames.length.toLocaleString()}${activeFilter ? ' (filtered)' : ''}`}
+        />
+        <StatCard
+          label={dowFilter !== null ? `Avg Draws / Day (${DOW_LABELS[dowFilter]}s)` : 'Avg Draws / Day'}
+          value={avgPerDay.toString()}
+          sub={`${oldestDate} → ${newestDate}`}
+        />
         <StatCard
           label="Sync Status"
           value={syncHealth}
-          sub={syncAgeMins !== null ? `${syncAgeMins}m ago · ${lastSync?.games_added ?? 0} added` : 'Never synced'}
+          sub={syncAgeMins !== null ? `${syncAgeMins}m ago · +${lastSync?.games_added ?? 0} last sync` : 'Never synced'}
           accent={syncColor}
         />
         <StatCard
           label="Prediction Confidence"
-          value={`${prediction.overallConfidence}/100`}
-          sub={`Best day: ${prediction.whenToPlay}`}
-          accent={prediction.overallConfidence > 65 ? 'text-green-400' : prediction.overallConfidence > 45 ? 'text-yellow-400' : 'text-slate-300'}
+          value={prediction ? `${prediction.overallConfidence}/100` : '—'}
+          sub={prediction ? `Best day: ${prediction.whenToPlay}` : 'Not enough data'}
+          accent={
+            prediction
+              ? prediction.overallConfidence > 65 ? 'text-green-400'
+              : prediction.overallConfidence > 45 ? 'text-yellow-400'
+              : 'text-slate-300'
+              : 'text-slate-500'
+          }
         />
       </div>
 
-      {/* Today's Top Picks + Recommendation */}
-      <div className="bg-surface rounded-xl p-5">
-        <div className="flex justify-between items-center mb-4">
-          <div>
-            <h2 className="font-semibold">Today's Algorithm Picks</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Top 6 of {prediction.spotCount}-spot recommendation · click a number for signal breakdown</p>
-          </div>
-          <a href="/prediction-portal" className="text-xs text-crimson hover:underline">Full Portal →</a>
+      {filteredGames.length < 50 && (
+        <div className="bg-yellow-900/20 border border-yellow-800 rounded-xl p-4 text-sm text-yellow-300">
+          Not enough data with the current filter ({filteredGames.length} games). Try widening the window or removing the day filter.
         </div>
+      )}
 
-        <div className="flex flex-wrap gap-2 mb-4">
-          {topPicks.map(p => (
-            <div key={p.number}
-              className={`w-12 h-12 rounded-lg flex flex-col items-center justify-center cursor-default ${
-                p.recommendation === 'Strong Play'
-                  ? 'bg-crimson text-white shadow-lg shadow-crimson/20'
-                  : 'bg-[#1a3a5e] text-blue-200'
-              }`}
-            >
-              <span className="text-base font-bold">{p.number}</span>
-              <span className="text-[9px] opacity-70">{p.confidence}</span>
+      {/* ── Today's Top Picks ───────────────────────────────────────────────── */}
+      {prediction && (
+        <div className="bg-surface rounded-xl p-5">
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h2 className="font-semibold">
+                Today's Algorithm Picks
+                {dowFilter !== null && <span className="text-slate-400 font-normal text-sm ml-2">({DOW_LABELS[dowFilter]}s only)</span>}
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">Top 6 of {prediction.spotCount}-spot recommendation · 5 weighted signals</p>
             </div>
-          ))}
-          <div className="flex items-center ml-2">
-            <a href="/prediction-portal" className="text-xs text-slate-500 hover:text-white">
-              +{prediction.picks.length - 6} more →
-            </a>
+            <a href="/prediction-portal" className="text-xs text-crimson hover:underline">Full Portal →</a>
           </div>
-        </div>
 
-        <div className="grid grid-cols-3 gap-3 text-center">
-          <div className="bg-[#0e0e10] rounded-lg p-2">
-            <div className="text-xs text-slate-500">Best Day</div>
-            <div className="text-sm font-semibold text-white">{prediction.whenToPlay}</div>
-          </div>
-          <div className="bg-[#0e0e10] rounded-lg p-2">
-            <div className="text-xs text-slate-500">Games / Session</div>
-            <div className="text-sm font-semibold text-white">{prediction.howManyGames}</div>
-          </div>
-          <div className="bg-[#0e0e10] rounded-lg p-2">
-            <div className="text-xs text-slate-500">Expected Match Rate</div>
-            <div className="text-sm font-semibold text-white">~{prediction.predictedMatchRate.toFixed(1)}/draw</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Prediction accuracy trend + Momentum chart */}
-      <div className="grid md:grid-cols-2 gap-6">
-        <div className="bg-surface rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-1 text-slate-300">Top-20 Pick Hit Rate (Last 50 Draws)</h2>
-          <p className="text-xs text-slate-500 mb-3">
-            How many of the current top-20 numbers appeared in each recent draw.
-            Expected baseline: 5 per draw (20/80). Avg: <strong className="text-white">{avgAccuracy.toFixed(1)}</strong>
-          </p>
-          <ResponsiveContainer width="100%" height={180}>
-            <LineChart data={recentAccuracy}>
-              <XAxis dataKey="game" hide />
-              <YAxis domain={[0, 12]} tick={{ fill: '#64748b', fontSize: 10 }} />
-              <Tooltip
-                contentStyle={{ background: '#16161a', border: '1px solid #333', borderRadius: 8 }}
-                formatter={(v: number) => [v, 'Hits from top 20']}
-                labelFormatter={v => `Draw #${v}`}
-              />
-              <ReferenceLine y={5} stroke="#4a4a5a" strokeDasharray="4 2" />
-              <Line type="monotone" dataKey="hits" stroke={CRIMSON} dot={false} strokeWidth={2} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="bg-surface rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-1 text-slate-300">Number Momentum (Recent vs Prior)</h2>
-          <p className="text-xs text-slate-500 mb-3">
-            Change in frequency: last 250 draws vs prior 250. Positive = trending up.
-          </p>
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={momentumChartData} layout="vertical">
-              <XAxis type="number" tick={{ fill: '#64748b', fontSize: 10 }} />
-              <YAxis dataKey="number" type="category" width={28} tick={{ fill: '#94a3b8', fontSize: 11 }} />
-              <Tooltip
-                contentStyle={{ background: '#16161a', border: '1px solid #333', borderRadius: 8 }}
-                formatter={(v: number) => [v > 0 ? `+${v}` : v, 'Δ frequency']}
-              />
-              <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                {momentumChartData.map((d, i) => (
-                  <Cell key={i} fill={d.type === 'rising' ? '#22c55e' : '#ef4444'} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Recent draws */}
-      <div className="bg-surface rounded-xl p-4">
-        <h2 className="text-sm font-semibold mb-3 text-slate-300">Recent Draws</h2>
-        <div className="space-y-2">
-          {recentDraws.map(g => {
-            const topHits = g.hits.filter(h => top20Nums.has(h));
-            return (
-              <div key={g.game_num} className="flex items-start gap-3 py-2 border-b border-[#1e1e24] last:border-0">
-                <div className="text-xs text-slate-500 w-20 shrink-0">
-                  <div className="font-mono">#{g.game_num}</div>
-                  <div>{g.draw_date}</div>
-                </div>
-                <div className="flex flex-wrap gap-1 flex-1">
-                  {g.hits.sort((a, b) => a - b).map(h => (
-                    <span key={h}
-                      className={`w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${
-                        top20Nums.has(h)
-                          ? 'bg-crimson/80 text-white'
-                          : 'bg-[#1e1e24] text-slate-500'
-                      }`}
-                    >
-                      {h}
-                    </span>
-                  ))}
-                </div>
-                <div className="text-xs text-slate-500 shrink-0 text-right">
-                  <div className="text-crimson font-semibold">{topHits.length}/20 top picks</div>
-                  {g.bonus && <div>B×{g.bonus}</div>}
-                </div>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {topPicks.map(p => (
+              <div key={p.number}
+                className={`w-12 h-12 rounded-lg flex flex-col items-center justify-center ${
+                  p.recommendation === 'Strong Play'
+                    ? 'bg-crimson text-white shadow-lg shadow-crimson/20'
+                    : 'bg-[#1a3a5e] text-blue-200'
+                }`}
+              >
+                <span className="text-base font-bold">{p.number}</span>
+                <span className="text-[9px] opacity-70">{p.confidence}</span>
               </div>
-            );
-          })}
+            ))}
+            <div className="flex items-center ml-2">
+              <a href="/prediction-portal" className="text-xs text-slate-500 hover:text-white">
+                +{prediction.picks.length - 6} more →
+              </a>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="bg-[#0e0e10] rounded-lg p-2">
+              <div className="text-xs text-slate-500">Best Day</div>
+              <div className="text-sm font-semibold text-white">{prediction.whenToPlay}</div>
+            </div>
+            <div className="bg-[#0e0e10] rounded-lg p-2">
+              <div className="text-xs text-slate-500">Games / Session</div>
+              <div className="text-sm font-semibold text-white">{prediction.howManyGames}</div>
+            </div>
+            <div className="bg-[#0e0e10] rounded-lg p-2">
+              <div className="text-xs text-slate-500">Expected Match Rate</div>
+              <div className="text-sm font-semibold text-white">~{prediction.predictedMatchRate.toFixed(1)}/draw</div>
+            </div>
+          </div>
         </div>
-        <p className="text-xs text-slate-600 mt-2">Crimson numbers are in the current top-20 picks.</p>
+      )}
+
+      {/* ── Charts ─────────────────────────────────────────────────────────── */}
+      {filteredGames.length >= 50 && (
+        <div className="grid md:grid-cols-2 gap-6">
+          <div className="bg-surface rounded-xl p-4">
+            <h2 className="text-sm font-semibold mb-1 text-slate-300">Top-20 Hit Rate (Last 50 Draws)</h2>
+            <p className="text-xs text-slate-500 mb-3">
+              How many of the current top-20 scored numbers appeared in each recent draw.
+              Baseline: 5/draw · Avg: <strong className="text-white">{avgAccuracy.toFixed(1)}</strong>
+            </p>
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={recentAccuracy}>
+                <XAxis dataKey="game" hide />
+                <YAxis domain={[0, 12]} tick={{ fill: '#64748b', fontSize: 10 }} />
+                <Tooltip
+                  contentStyle={{ background: '#16161a', border: '1px solid #333', borderRadius: 8 }}
+                  formatter={(v: number) => [v, 'Hits from top 20']}
+                  labelFormatter={v => `Draw #${v}`}
+                />
+                <ReferenceLine y={5} stroke="#4a4a5a" strokeDasharray="4 2" />
+                <Line type="monotone" dataKey="hits" stroke={CRIMSON} dot={false} strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="bg-surface rounded-xl p-4">
+            <h2 className="text-sm font-semibold mb-1 text-slate-300">Number Momentum</h2>
+            <p className="text-xs text-slate-500 mb-3">
+              Frequency change: recent half vs prior half of analysis window. Green = trending up.
+            </p>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={momentumChartData} layout="vertical">
+                <XAxis type="number" tick={{ fill: '#64748b', fontSize: 10 }} />
+                <YAxis dataKey="number" type="category" width={28} tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={{ background: '#16161a', border: '1px solid #333', borderRadius: 8 }}
+                  formatter={(v: number) => [v > 0 ? `+${v}` : v, 'Δ frequency']}
+                />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                  {momentumChartData.map((d, i) => (
+                    <Cell key={i} fill={d.type === 'rising' ? '#22c55e' : '#ef4444'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* ── Recent draws ────────────────────────────────────────────────────── */}
+      <div className="bg-surface rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-3 text-slate-300">
+          Recent Draws {dowFilter !== null ? `(${DOW_LABELS[dowFilter]}s)` : ''}
+        </h2>
+        {recentDraws.length === 0 ? (
+          <p className="text-sm text-slate-500">No draws match the current filter.</p>
+        ) : (
+          <>
+            <div className="space-y-2">
+              {recentDraws.map(g => {
+                const topHits = g.hits.filter(h => top20Nums.has(h));
+                return (
+                  <div key={g.game_num} className="flex items-start gap-3 py-2 border-b border-[#1e1e24] last:border-0">
+                    <div className="text-xs text-slate-500 w-20 shrink-0">
+                      <div className="font-mono">#{g.game_num}</div>
+                      <div>{g.draw_date}</div>
+                      {g.draw_dow !== null && <div className="text-slate-600">{DOW_SHORT[g.draw_dow]}</div>}
+                    </div>
+                    <div className="flex flex-wrap gap-1 flex-1">
+                      {g.hits.sort((a, b) => a - b).map(h => (
+                        <span key={h}
+                          className={`w-6 h-6 rounded flex items-center justify-center text-xs font-bold ${
+                            top20Nums.has(h) ? 'bg-crimson/80 text-white' : 'bg-[#1e1e24] text-slate-500'
+                          }`}
+                        >
+                          {h}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="text-xs text-slate-500 shrink-0 text-right">
+                      <div className="text-crimson font-semibold">{topHits.length}/20</div>
+                      {g.bonus ? <div>B×{g.bonus}</div> : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-slate-600 mt-2">Crimson = in current top-20 picks.</p>
+          </>
+        )}
       </div>
 
-      {/* Sync history */}
+      {/* ── Sync history ────────────────────────────────────────────────────── */}
       <div className="bg-surface rounded-xl p-4">
         <h2 className="text-sm font-semibold mb-3 text-slate-300">Recent Sync Activity</h2>
         {syncLog.length === 0 ? (
@@ -267,13 +386,13 @@ export default function DashboardPage() {
         ) : (
           <div className="space-y-1">
             {syncLog.slice(0, 8).map(s => (
-              <div key={s.id} className="flex justify-between text-xs py-1 border-b border-[#1e1e24] last:border-0">
-                <span className="text-slate-500">{new Date(s.synced_at).toLocaleString()}</span>
-                <span className="text-slate-400 capitalize">{s.source}</span>
-                <span className={s.games_added > 0 ? 'text-green-400' : 'text-slate-500'}>
+              <div key={s.id} className="flex justify-between text-xs py-1 border-b border-[#1e1e24] last:border-0 gap-4">
+                <span className="text-slate-500 shrink-0">{new Date(s.synced_at).toLocaleString()}</span>
+                <span className="text-slate-400 capitalize shrink-0">{s.source}</span>
+                <span className={`shrink-0 ${s.games_added > 0 ? 'text-green-400' : 'text-slate-500'}`}>
                   {s.games_added > 0 ? `+${s.games_added} games` : 'up to date'}
                 </span>
-                <span className="text-slate-600 max-w-xs truncate">{s.notes}</span>
+                <span className="text-slate-600 truncate">{s.notes}</span>
               </div>
             ))}
           </div>
