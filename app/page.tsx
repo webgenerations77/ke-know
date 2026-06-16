@@ -220,7 +220,7 @@ export default function SplashPage() {
         {/* Logo */}
         <div className={fade(1)}>
           <Image
-            src="/Logo-Splash.png"
+            src="/Logo-Keno.png"
             alt="KE-KNOW"
             width={640}
             height={320}
@@ -242,13 +242,13 @@ export default function SplashPage() {
             onClick={() => router.push('/monitor')}
             className="group relative px-12 py-3.5 rounded-lg bg-crimson hover:bg-crimson-hover text-white text-sm tracking-widest font-medium transition-all duration-200 hover:shadow-[0_0_32px_rgba(139,26,74,0.45)]"
           >
-            Enter
+            Watch Arthur Live
             <span className="ml-3 opacity-50 group-hover:opacity-100 group-hover:ml-4 transition-all duration-200">→</span>
           </button>
         </div>
 
         {/* Divider */}
-        <div className={`mt-10 mb-10 w-px h-10 bg-gradient-to-b from-transparent via-[#2a2a2e] to-transparent ${fade(4)}`} />
+        <div className={`mt-5 mb-6 w-px h-10 bg-gradient-to-b from-transparent via-[#2a2a2e] to-transparent ${fade(4)}`} />
 
         {/* ── Arthur block ── */}
         <div className={`flex flex-col items-center gap-4 ${fade(4)}`}>
