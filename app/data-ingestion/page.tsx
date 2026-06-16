@@ -14,6 +14,7 @@ export default function DataIngestionPage() {
   const { toast } = useToast();
   const router = useRouter();
   const [syncing, setSyncing] = useState(false);
+  const [evolving, setEvolving] = useState(false);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [log, setLog] = useState<string[]>([]);
@@ -52,13 +53,30 @@ export default function DataIngestionPage() {
       const res = await fetch('/api/sync-manual', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Sync failed');
-      toast(`Sync complete — ${data.gamesAdded ?? 0} game(s) added, evolution ran: ${data.evolutionRan ? 'yes' : 'no'}`, 'success');
+      toast(`Sync complete — ${data.gamesAdded ?? 0} game(s) added`, 'success');
       await loadStats();
       router.refresh();
     } catch (e) {
       toast(String(e), 'error');
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function handleEvolve() {
+    setEvolving(true);
+    try {
+      const res = await fetch('/api/evolve', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? 'Evolution failed');
+      toast(
+        `Evolution complete — Gen ${data.generation}, ${data.promotions} champion(s) promoted, ${data.newStrategies} new strategies`,
+        'success'
+      );
+    } catch (e) {
+      toast(String(e), 'error');
+    } finally {
+      setEvolving(false);
     }
   }
 
@@ -187,20 +205,41 @@ export default function DataIngestionPage() {
         ))}
       </div>
 
-      {/* Sync Now */}
-      <div className="bg-surface rounded-xl p-5 space-y-4">
-        <h2 className="font-semibold">Sync &amp; Evolve</h2>
-        <p className="text-sm text-slate-400">
-          Pulls any new draws from the Maryland Keno API, scores pending predictions, and runs one evolution generation.
-          Use this to kick-start Arthur after applying DB migrations.
-        </p>
-        <button
-          onClick={handleSync}
-          disabled={syncing}
-          className="px-5 py-2.5 rounded-lg bg-crimson hover:bg-crimson-hover disabled:opacity-50 text-white text-sm font-medium transition-colors"
-        >
-          {syncing ? 'Running…' : 'Sync Now'}
-        </button>
+      {/* Arthur controls */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+        {/* Sync new games */}
+        <div className="bg-surface rounded-xl p-5 space-y-3">
+          <h2 className="font-semibold">Sync New Games</h2>
+          <p className="text-sm text-slate-400">
+            Pulls the latest draws from the Maryland Keno API and scores any pending predictions.
+            The cron job does this automatically every hour.
+          </p>
+          <button
+            onClick={handleSync}
+            disabled={syncing || evolving}
+            className="px-5 py-2.5 rounded-lg bg-[#1e1e24] border border-[#333] hover:border-crimson/50 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+          >
+            {syncing ? 'Syncing…' : 'Sync Now'}
+          </button>
+        </div>
+
+        {/* Run evolution */}
+        <div className="bg-surface rounded-xl p-5 space-y-3 border border-crimson/20">
+          <h2 className="font-semibold text-crimson">Run Evolution</h2>
+          <p className="text-sm text-slate-400">
+            Scores all strategies, breeds the next generation, promotes new champions, and commits
+            Arthur's picks for the next draw. <strong className="text-slate-300">Run this after the DB migration to start Arthur playing.</strong>
+          </p>
+          <button
+            onClick={handleEvolve}
+            disabled={evolving || syncing}
+            className="px-5 py-2.5 rounded-lg bg-crimson hover:bg-crimson-hover disabled:opacity-50 text-white text-sm font-medium transition-colors"
+          >
+            {evolving ? 'Evolving…' : 'Run Evolution'}
+          </button>
+        </div>
+
       </div>
 
       {/* Backfill */}
