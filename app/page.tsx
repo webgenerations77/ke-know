@@ -248,7 +248,7 @@ export default function SplashPage() {
         </div>
 
         {/* Divider */}
-        <div className={`mt-5 mb-6 w-px h-10 bg-gradient-to-b from-transparent via-[#2a2a2e] to-transparent ${fade(4)}`} />
+        <div className={`mt-3 mb-3 w-px h-6 bg-gradient-to-b from-transparent via-[#2a2a2e] to-transparent ${fade(4)}`} />
 
         {/* ── Arthur block ── */}
         <div className={`flex flex-col items-center gap-4 ${fade(4)}`}>
