@@ -230,7 +230,7 @@ export default function SplashPage() {
         </div>
 
         {/* Tagline */}
-        <div className={`mt-5 ${fade(2)}`}>
+        <div className={`mt-2 ${fade(2)}`}>
           <p className="text-xs tracking-[0.35em] text-slate-500 uppercase text-center">
             Maryland Keno Intelligence
           </p>
