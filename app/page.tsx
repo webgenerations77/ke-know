@@ -230,7 +230,7 @@ export default function SplashPage() {
         </div>
 
         {/* Tagline */}
-        <div className={`-mt-4 ${fade(2)}`}>
+        <div className={`-mt-7 ${fade(2)}`}>
           <p className="text-xs tracking-[0.35em] text-slate-500 uppercase text-center">
             Maryland Keno Intelligence
           </p>
@@ -349,14 +349,14 @@ export default function SplashPage() {
       </div>
 
       {/* Powered By footer */}
-      <div className={`absolute bottom-6 flex flex-col items-center gap-2 ${fade(5)}`}>
+      <div className={`absolute bottom-6 flex flex-row items-center gap-2 ${fade(5)}`}>
         <p className="text-[9px] text-slate-700 tracking-[0.3em] uppercase">Powered By</p>
         <Image
           src="/Logo.png"
           alt="Powered By"
           width={100}
           height={32}
-          style={{ height: '28px', width: 'auto', objectFit: 'contain', opacity: 0.35 }}
+          style={{ height: '22px', width: 'auto', objectFit: 'contain', opacity: 0.35 }}
         />
       </div>
     </div>
