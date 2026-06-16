@@ -516,7 +516,21 @@ export default function MonitorPage() {
       <div className="bg-surface rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
           <h2 className="font-semibold text-sm">Live Game & Prediction Feed</h2>
-          <span className="text-xs text-slate-500">Last 20 games · live</span>
+          {(() => {
+            const gamesWithPredictions = new Set(liveResults.map(r => r.game_num));
+            const covered = recentGames.filter(g => gamesWithPredictions.has(g.game_num)).length;
+            const total = recentGames.length;
+            const pct = total > 0 ? Math.round(covered / total * 100) : 0;
+            return (
+              <span className="text-xs text-slate-500">
+                Arthur covered{' '}
+                <span className={pct === 100 ? 'text-green-400' : pct >= 75 ? 'text-amber-400' : 'text-red-400'}>
+                  {covered}/{total}
+                </span>{' '}
+                recent games
+              </span>
+            );
+          })()}
         </div>
         <div className="overflow-x-auto">
           {recentGames.length === 0 ? (
