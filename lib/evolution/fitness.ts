@@ -14,6 +14,7 @@ export interface SimResult {
   best_single_win: number;
   max_losing_streak: number;
   picks_snapshot: number[];
+  wager_per_game: number;
 }
 
 function computeWeight(genome: StrategyGenome, pos: number): number {
@@ -107,6 +108,13 @@ function selectTopNInto(
  * Full strategy simulation. Games must be sorted ASC by game_num.
  * trainingEndIdx: last index (exclusive) of training set in allGames
  * testStartIdx: first index (inclusive) of test set in allGames
+ *
+ * Bonus logic: if genome.bonus_type is 'bonus', wager cost is $2 and the
+ * prize is multiplied by the drawn bonus number stored on the game row.
+ * 'super_bonus' costs $3 and uses the super_bonus drawn multiplier.
+ * When multiplier data is missing (null), falls back to multiplier=1 so the
+ * strategy still pays the premium wager — this correctly penalises bonus
+ * strategies on games where the multiplier wasn't recorded.
  */
 export function simulateStrategy(
   genome: StrategyGenome,
@@ -120,6 +128,9 @@ export function simulateStrategy(
   const topIdx = new Int32Array(spotCount);
   const topScore = new Float64Array(spotCount);
   const lastPicksBuf = new Int32Array(spotCount);
+
+  const bonusType = (genome.bonus_type ?? 'none') as string;
+  const wagerCost = bonusType === 'super_bonus' ? 3 : bonusType === 'bonus' ? 2 : 1;
 
   let trainPnl = 0, trainGames = 0, trainWins = 0;
   let testPnl = 0, testGames = 0, testWins = 0;
@@ -145,21 +156,27 @@ export function simulateStrategy(
       }
     }
 
-    const prize = lookupPrize(spotCount, matches);
-    const pnl = prize - 1;
+    const basePrize = lookupPrize(spotCount, matches);
+    const multiplier = bonusType === 'bonus'
+      ? (allGames[i].bonus ?? 1)
+      : bonusType === 'super_bonus'
+      ? (allGames[i].super_bonus ?? 1)
+      : 1;
+    const effectivePrize = basePrize > 0 ? basePrize * multiplier : 0;
+    const pnl = effectivePrize - wagerCost;
 
     totalMatches += matches;
-    if (prize > bestWin) bestWin = prize;
+    if (effectivePrize > bestWin) bestWin = effectivePrize;
 
     if (inTraining) {
       trainPnl += pnl;
       trainGames++;
-      if (prize > 0) { trainWins++; losingStreak = 0; }
+      if (effectivePrize > 0) { trainWins++; losingStreak = 0; }
       else { losingStreak++; if (losingStreak > maxLosingStreak) maxLosingStreak = losingStreak; }
     } else {
       testPnl += pnl;
       testGames++;
-      if (prize > 0) { testWins++; losingStreak = 0; }
+      if (effectivePrize > 0) { testWins++; losingStreak = 0; }
       else { losingStreak++; if (losingStreak > maxLosingStreak) maxLosingStreak = losingStreak; }
     }
   }
@@ -180,6 +197,7 @@ export function simulateStrategy(
     best_single_win: bestWin,
     max_losing_streak: maxLosingStreak,
     picks_snapshot: lastPicks,
+    wager_per_game: wagerCost,
   };
 }
 

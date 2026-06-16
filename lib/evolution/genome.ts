@@ -16,6 +16,7 @@ export interface StrategyGenome {
   w_streak: number;
   w_bonus_corr: number;
   w_time: number;
+  bonus_type: 'none' | 'bonus' | 'super_bonus';
 }
 
 export const GENOME_RANGES: Record<keyof StrategyGenome, [number | string, number | string]> = {
@@ -36,11 +37,14 @@ export const GENOME_RANGES: Record<keyof StrategyGenome, [number | string, numbe
   w_streak:                 [0.0,  1.0],
   w_bonus_corr:             [0.0,  1.0],
   w_time:                   [0.0,  1.0],
+  bonus_type:               ['none', 'super_bonus'],
 };
 
 const WEIGHTING_METHODS: StrategyGenome['weighting_method'][] = [
   'raw', 'linear_decay', 'exponential_decay',
 ];
+
+const BONUS_TYPES: StrategyGenome['bonus_type'][] = ['none', 'bonus', 'super_bonus'];
 
 function rand(min: number, max: number): number {
   return min + Math.random() * (max - min);
@@ -69,6 +73,7 @@ export function randomGenome(): StrategyGenome {
     w_streak:                 rand(0.0, 1.0),
     w_bonus_corr:             rand(0.0, 1.0),
     w_time:                   rand(0.0, 1.0),
+    bonus_type:               BONUS_TYPES[Math.floor(Math.random() * 3)],
   };
 }
 
@@ -92,10 +97,14 @@ export function mutateGenome(
   const shuffled = [...numericKeys].sort(() => Math.random() - 0.5);
   const toMutate = shuffled.slice(0, numParams);
 
-  // Maybe mutate weighting_method
+  // Maybe mutate categorical genes
   if (Math.random() < 0.15) {
     g.weighting_method = WEIGHTING_METHODS[Math.floor(Math.random() * 3)];
     log.push(`weighting_method → ${g.weighting_method}`);
+  }
+  if (Math.random() < 0.10) {
+    g.bonus_type = BONUS_TYPES[Math.floor(Math.random() * 3)];
+    log.push(`bonus_type → ${g.bonus_type}`);
   }
 
   for (const key of toMutate) {
@@ -169,6 +178,13 @@ export function describeGenome(genome: StrategyGenome): string {
 
   if (genome.bonus_correlation_weight > 0.4) {
     parts.push('heavy bonus correlation weighting');
+  }
+
+  const bonusType = genome.bonus_type ?? 'none';
+  if (bonusType === 'bonus') {
+    parts.push('plays Bonus (2× cost, prize multiplied by drawn Bonus number)');
+  } else if (bonusType === 'super_bonus') {
+    parts.push('plays Super Bonus (3× cost, prize multiplied by drawn Super Bonus number)');
   }
 
   const wSum = genome.w_frequency + genome.w_recency + genome.w_gap + genome.w_streak;

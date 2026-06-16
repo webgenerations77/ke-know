@@ -110,6 +110,7 @@ export async function POST(req: NextRequest) {
         spot_count: s.spot_count,
         predicted_for_game_num: nextGameNum,
         picks: generatePicks(s.genome as StrategyGenome, s.spot_count, games),
+        bonus_type: (s.genome as StrategyGenome).bonus_type ?? 'none',
       }));
 
       await db.from('pending_predictions').upsert(newPredictions, {

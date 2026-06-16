@@ -298,6 +298,7 @@ export async function runEvolution(): Promise<{
     spot_count: s.spot_count,
     predicted_for_game_num: nextGameNum,
     picks: generatePicks(s.genome as StrategyGenome, s.spot_count, allGames),
+    bonus_type: (s.genome as StrategyGenome).bonus_type ?? 'none',
   }));
 
   if (predictions.length > 0) {
@@ -381,6 +382,7 @@ async function scoreStrategies(
       max_losing_streak: simResult.max_losing_streak,
       fitness_score: fitness,
       picks_snapshot: simResult.picks_snapshot,
+      wager_assumed: simResult.wager_per_game,
     });
   }
 

@@ -423,6 +423,7 @@ export default function StrategyLabPage() {
                   <th className="px-3 py-2 text-left">Game</th>
                   <th className="px-3 py-2 text-left">Strategy</th>
                   <th className="px-3 py-2 text-left">Spots</th>
+                  <th className="px-3 py-2 text-left">Bonus</th>
                   <th className="px-3 py-2 text-left">Picks</th>
                   <th className="px-3 py-2 text-left">Matches</th>
                   <th className="px-3 py-2 text-right">Prize</th>
@@ -430,11 +431,23 @@ export default function StrategyLabPage() {
                 </tr>
               </thead>
               <tbody>
-                {recentLive.map(r => (
+                {recentLive.map(r => {
+                  const bt = r.bonus_type ?? 'none';
+                  const bm = r.bonus_multiplier ?? 1;
+                  return (
                   <tr key={r.id} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
                     <td className="px-3 py-2 font-mono text-slate-400">#{r.game_num}</td>
                     <td className="px-3 py-2 text-slate-500">#{r.strategy_id}</td>
                     <td className="px-3 py-2">{r.spot_count}</td>
+                    <td className="px-3 py-2">
+                      {bt === 'none' ? (
+                        <span className="text-slate-600">—</span>
+                      ) : (
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${bt === 'super_bonus' ? 'bg-purple-500/20 text-purple-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                          {bt === 'super_bonus' ? 'SB' : 'B'}×{bm}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-0.5">
                         {r.picks.map(n => (
@@ -451,7 +464,8 @@ export default function StrategyLabPage() {
                       {r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(2)}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -506,6 +520,7 @@ export default function StrategyLabPage() {
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     {[
                       ['Fitness Score', explorer.strategy.latestResult.fitness_score?.toFixed(4)],
+                      ['Wager/game', `$${explorer.strategy.latestResult.wager_assumed ?? 1}`],
                       ['Training P&L/game', `$${explorer.strategy.latestResult.training_pnl_per_game?.toFixed(3) ?? '—'}`],
                       ['Test P&L/game', `$${explorer.strategy.latestResult.test_pnl_per_game?.toFixed(3) ?? '—'}`],
                       ['Live P&L/game', explorer.strategy.livePlays > 0 ? `$${explorer.strategy.livePnlPerGame.toFixed(3)}` : '—'],

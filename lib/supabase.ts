@@ -123,6 +123,8 @@ export interface LiveResult {
   prize: number;
   pnl: number;
   is_shadow_play: boolean;
+  bonus_type: string;
+  bonus_multiplier: number;
 }
 
 export interface PendingPrediction {
@@ -133,6 +135,7 @@ export interface PendingPrediction {
   predicted_for_game_num: number;
   picks: number[];
   scored: boolean;
+  bonus_type: string;
 }
 
 export interface SystemEvent {
