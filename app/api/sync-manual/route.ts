@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server';
+import { createServiceClient } from '@/lib/supabase-server';
+import { performSync } from '@/lib/sync';
+
+export const maxDuration = 60;
 
 export async function POST() {
-  const base =
-    process.env.NEXT_PUBLIC_SITE_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+  const db = createServiceClient();
 
-  const res = await fetch(`${base}/api/sync`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.CRON_SECRET}`,
-    },
-  });
-
-  const data = await res.json();
-  return NextResponse.json(data, { status: res.status });
+  try {
+    const result = await performSync(db);
+    return NextResponse.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
