@@ -16,6 +16,31 @@ interface EvoChampion {
   result: StrategyResult | null;
 }
 
+interface BonusPick {
+  label: 'Base' | 'Bonus' | 'Super Bonus';
+  baseRatio: number;
+  bonusRatio: number;
+  superRatio: number;
+}
+
+interface Recommendation {
+  spots: number;
+  source: 'evolution' | 'ev';
+  evoChampion?: EvoChampion;
+  evPerDollar: number;
+  recommendedGames: number;
+  bonus: BonusPick;
+}
+
+// How many games in a row to commit to so the strategy has room to recover
+// from its own worst historical losing streak (with a buffer), rounded to a
+// friendly number. Strategies without backtest history default to a
+// conservative 20-game session.
+function recommendedSessionLength(maxLosingStreak: number | null | undefined): number {
+  const streak = maxLosingStreak ?? 5;
+  return Math.max(20, Math.ceil((streak * 2) / 10) * 10);
+}
+
 interface SpotRow {
   spots: number;
   oddsDisplay: string;
@@ -46,7 +71,7 @@ export default function SpotAdvisorPage() {
   const [wager, setWager] = useState(1);
   const [wagerType, setWagerType] = useState<'classic' | 'pktg'>('classic');
   const [loading, setLoading] = useState(true);
-  const [evoChampion, setEvoChampion] = useState<EvoChampion | null>(null);
+  const [evoChampions, setEvoChampions] = useState<EvoChampion[]>([]);
   const [evoLoading, setEvoLoading] = useState(true);
 
   useEffect(() => {
@@ -57,10 +82,10 @@ export default function SpotAdvisorPage() {
       });
   }, []);
 
-  // Pull the evolution engine's best promoted strategy (highest fitness score
-  // across all generations) to drive the headline recommendation.
+  // Pull every promoted strategy (one per spot count) from the evolution
+  // engine, sorted by fitness score, to drive the top recommendations.
   useEffect(() => {
-    async function loadEvoChampion() {
+    async function loadEvoChampions() {
       const { data: strats } = await supabase
         .from('strategies')
         .select('*')
@@ -83,23 +108,16 @@ export default function SpotAdvisorPage() {
         if (!latestByStrategy.has(r.strategy_id)) latestByStrategy.set(r.strategy_id, r);
       }
 
-      let champ: Strategy | null = null;
-      let champResult: StrategyResult | null = null;
-      let bestFitness = -Infinity;
-      for (const s of strats as Strategy[]) {
-        const r = latestByStrategy.get(s.id) ?? null;
-        const fitness = r?.fitness_score ?? -999;
-        if (fitness > bestFitness) {
-          bestFitness = fitness;
-          champ = s;
-          champResult = r;
-        }
-      }
+      const champs: EvoChampion[] = (strats as Strategy[]).map(s => ({
+        strategy: s,
+        result: latestByStrategy.get(s.id) ?? null,
+      }));
+      champs.sort((a, b) => (b.result?.fitness_score ?? -999) - (a.result?.fitness_score ?? -999));
 
-      setEvoChampion(champ ? { strategy: champ, result: champResult } : null);
+      setEvoChampions(champs);
       setEvoLoading(false);
     }
-    loadEvoChampion();
+    loadEvoChampions();
   }, []);
 
   const effectiveWager = wagerType === 'pktg' ? wager * 0.25 : wager;
@@ -149,19 +167,61 @@ export default function SpotAdvisorPage() {
     ? expectedMultiplierFromDist(dbSuperDist)
     : SUPER_BONUS_DIST.reduce((s, x) => s + x.multiplier * x.prob, 0);
 
+  // Best base/bonus/super-bonus tier for a given spot count, by EV per $1 wagered.
+  function bonusFor(spots: number): BonusPick {
+    const ev = computeEV(spots);
+    const baseRatio = ev; // per $1
+    const bonusRatio = (ev * bonusMultFromDb) / 2; // per $1 (cost 2×)
+    const superRatio = (ev * superMultFromDb) / 3; // per $1 (cost 3×)
+    const label: BonusPick['label'] = superRatio > bonusRatio && superRatio > baseRatio
+      ? 'Super Bonus'
+      : bonusRatio > baseRatio
+      ? 'Bonus'
+      : 'Base';
+    return { label, baseRatio, bonusRatio, superRatio };
+  }
+
   const baseEv = computeEV(bestSpots);
-  const bonusEv = baseEv * bonusMultFromDb; // return on $1 of prizes, wager cost is 2×
-  const superEv = baseEv * superMultFromDb; // return on $1 of prizes, wager cost is 3×
+  const { label: bestBonus, baseRatio, bonusRatio, superRatio } = bonusFor(bestSpots);
 
-  const baseRatio = baseEv; // per $1
-  const bonusRatio = bonusEv / 2; // per $1 (cost 2×)
-  const superRatio = superEv / 3; // per $1 (cost 3×)
+  // Top 3 recommendations: evolution-promoted champions first (highest fitness,
+  // one per spot count), filled out with the next-best static EV spot counts
+  // until evolution has promoted enough champions.
+  const top3: Recommendation[] = (() => {
+    const list: Recommendation[] = [];
+    const usedSpots = new Set<number>();
 
-  const bestBonus = superRatio > bonusRatio && superRatio > baseRatio
-    ? 'Super Bonus'
-    : bonusRatio > baseRatio
-    ? 'Bonus'
-    : 'None';
+    for (const champ of evoChampions) {
+      if (list.length >= 3) break;
+      const spots = champ.strategy.spot_count;
+      if (usedSpots.has(spots)) continue;
+      usedSpots.add(spots);
+      list.push({
+        spots,
+        source: 'evolution',
+        evoChampion: champ,
+        evPerDollar: computeEV(spots),
+        recommendedGames: recommendedSessionLength(champ.result?.max_losing_streak),
+        bonus: bonusFor(spots),
+      });
+    }
+
+    const evSorted = [...rows].sort((a, b) => b.evPerDollar - a.evPerDollar);
+    for (const r of evSorted) {
+      if (list.length >= 3) break;
+      if (usedSpots.has(r.spots)) continue;
+      usedSpots.add(r.spots);
+      list.push({
+        spots: r.spots,
+        source: 'ev',
+        evPerDollar: r.evPerDollar,
+        recommendedGames: recommendedSessionLength(null),
+        bonus: bonusFor(r.spots),
+      });
+    }
+
+    return list;
+  })();
 
   if (loading) return <div className="text-slate-500 pt-8">Loading…</div>;
 
@@ -169,68 +229,87 @@ export default function SpotAdvisorPage() {
     <div className="space-y-6 max-w-4xl">
       <h1 className="text-2xl font-bold">Spot Advisor</h1>
 
-      {/* Recommendation callout — driven by the evolution engine's best
-          promoted strategy once one exists, falling back to the static
-          highest-EV spot count until the engine has produced a champion. */}
-      <div className="bg-crimson/10 border border-crimson/30 rounded-xl p-5 space-y-2">
-        <div className="flex items-center gap-2">
-          <h2 className="font-semibold text-crimson-light">Recommendation</h2>
-          {evoChampion && (
-            <span className="px-2 py-0.5 rounded-full bg-crimson/20 text-crimson-light text-[10px] font-semibold uppercase tracking-wide">
-              Evolution-Learned
-            </span>
-          )}
+      {/* Top 3 Recommendations — evolution-promoted champions (highest fitness
+          score, one per spot count) first, filled out with the next-best
+          static EV spot counts until the engine has promoted enough champions. */}
+      <div className="bg-crimson/10 border border-crimson/30 rounded-xl p-5 space-y-4">
+        <h2 className="font-semibold text-crimson-light">Top 3 Recommendations</h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {top3.map((rec, i) => (
+            <div key={`${rec.spots}-${i}`} className="bg-[#0e0e10] rounded-xl p-4 border border-[#2a2a2e] space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-crimson">#{i + 1}</span>
+                {rec.source === 'evolution' ? (
+                  <span className="px-2 py-0.5 rounded-full bg-crimson/20 text-crimson-light text-[10px] font-semibold uppercase tracking-wide">
+                    Evolution-Learned
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-400 text-[10px] font-semibold uppercase tracking-wide">
+                    EV-Based
+                  </span>
+                )}
+              </div>
+
+              <div className="text-lg font-bold text-white">Play {rec.spots} spots</div>
+
+              {rec.evoChampion && (
+                <p className="text-xs text-slate-400 italic">
+                  {describeGenome(rec.evoChampion.strategy.genome as unknown as StrategyGenome)}
+                </p>
+              )}
+
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Games to play</span>
+                  <span className="font-mono text-white">{rec.recommendedGames}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Wager per game</span>
+                  <span className="font-mono text-white">${wager}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Bonus to play</span>
+                  <span className="font-mono text-white">{rec.bonus.label}</span>
+                </div>
+                {rec.evoChampion?.result?.test_pnl_per_game != null ? (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Backtested P&L/game</span>
+                    <span className={`font-mono ${rec.evoChampion.result.test_pnl_per_game >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      ${rec.evoChampion.result.test_pnl_per_game.toFixed(3)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">EV / $1 wagered</span>
+                    <span className="font-mono text-green-400">{(rec.evPerDollar * 100).toFixed(1)}¢</span>
+                  </div>
+                )}
+                {rec.evoChampion?.result?.win_rate != null && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Win rate</span>
+                    <span className="font-mono text-white">{(rec.evoChampion.result.win_rate * 100).toFixed(1)}%</span>
+                  </div>
+                )}
+              </div>
+
+              {rec.evoChampion?.result?.picks_snapshot && rec.evoChampion.result.picks_snapshot.length > 0 && (
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {rec.evoChampion.result.picks_snapshot.map(n => <Ball key={n} n={n} />)}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
 
-        {!evoLoading && evoChampion ? (
-          <>
-            <p className="text-sm text-slate-300 leading-relaxed">
-              <strong className="text-white">Play {evoChampion.strategy.spot_count} spots</strong> — the top-performing
-              strategy bred across {evoChampion.strategy.generation} generations of evolution
-              (Strategy #{evoChampion.strategy.id}).
-              {evoChampion.result?.test_pnl_per_game != null && (
-                <>
-                  {' '}Backtested return:{' '}
-                  <strong className={evoChampion.result.test_pnl_per_game >= 0 ? 'text-green-400' : 'text-red-400'}>
-                    ${evoChampion.result.test_pnl_per_game.toFixed(3)}/game
-                  </strong>.
-                </>
-              )}
-              {evoChampion.result?.win_rate != null && (
-                <> Win rate: <strong>{(evoChampion.result.win_rate * 100).toFixed(1)}%</strong>.</>
-              )}
-            </p>
-            <p className="text-xs text-slate-400 italic">
-              {describeGenome(evoChampion.strategy.genome as unknown as StrategyGenome)}
-            </p>
-            {evoChampion.result?.picks_snapshot && evoChampion.result.picks_snapshot.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {evoChampion.result.picks_snapshot.map(n => <Ball key={n} n={n} />)}
-              </div>
-            )}
-            <p className="text-xs text-slate-500">
-              Generated by the evolution engine, which continuously backtests and mutates strategies against real
-              draw history and promotes the fittest. See Strategy Lab for the full leaderboard and lineage.
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="text-sm text-slate-300 leading-relaxed">
-              <strong className="text-white">Play {bestSpots} spots</strong> — it has the highest expected return of{' '}
-              <strong className="text-green-400">{fmtEv(rows[bestIdx].evPerDollar * prizeScale, wager)}</strong> per ${wager} wager
-              (return ratio: {(rows[bestIdx].evPerDollar * 100).toFixed(1)}¢ per dollar wagered).
-              {rows[bestIdx].historicalHitRate !== null && (
-                <> Historical hit rate using top-scored numbers: <strong>{rows[bestIdx].historicalHitRate.toFixed(1)}%</strong>.</>
-              )}
-            </p>
-            <p className="text-xs text-slate-500">
-              EV is calculated from official Maryland Lottery prize tables using the hypergeometric probability distribution
-              (N=80, k=20 drawn). A higher EV per dollar means a better expected return — though all spot counts are
-              negative-EV in the long run (that's how lotteries work). This tool helps you choose the least-bad option.
-              {!evoLoading && ' No evolution champion has been promoted yet — once the engine promotes a strategy, this card will switch to its picks automatically.'}
-            </p>
-          </>
-        )}
+        <p className="text-xs text-slate-500">
+          Evolution-Learned picks come from the highest-fitness promoted strategies — continuously backtested and
+          bred against real draw history (see Strategy Lab for the full leaderboard). EV-Based picks fill any
+          remaining slots using the static highest-expected-value spot counts until the engine promotes more
+          champions. &quot;Games to play&quot; is sized to ride out each strategy&apos;s worst historical losing
+          streak; &quot;Bonus to play&quot; is whichever of Base/Bonus/Super Bonus has the best EV per dollar for
+          that spot count.{!evoLoading && evoChampions.length === 0 && ' No evolution champions have been promoted yet — these will switch to evolution picks automatically once one is.'}
+        </p>
       </div>
 
       {/* Controls */}

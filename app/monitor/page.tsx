@@ -113,6 +113,10 @@ function PerfCol({
 export default function MonitorPage() {
   const [events, setEvents] = useState<SystemEvent[]>([]);
   const [liveResults, setLiveResults] = useState<LiveResult[]>([]);
+  // True all-time totals (unlike `liveResults`, which is capped to the most
+  // recent 200 rows for the live feed / rolling 24h-7d windows). Drives the
+  // overall win/loss summary cards and the "All time" rolling-performance column.
+  const [allLiveResults, setAllLiveResults] = useState<LiveResult[]>([]);
   const [recentGames, setRecentGames] = useState<Game[]>([]);
   const [evoState, setEvoState] = useState<EvolutionState | null>(null);
   const [fitnessByGen, setFitnessByGen] = useState<{ generation: number; [key: string]: number }[]>([]);
@@ -128,6 +132,7 @@ export default function MonitorPage() {
     const [
       { data: evts },
       { data: results },
+      { data: allResults },
       { data: games },
       { data: evo },
       { data: champs },
@@ -137,6 +142,7 @@ export default function MonitorPage() {
     ] = await Promise.all([
       supabase.from('system_events').select('*').order('occurred_at', { ascending: false }).limit(100),
       supabase.from('live_results').select('*').order('scored_at', { ascending: false }).limit(200),
+      supabase.from('live_results').select('*').order('scored_at', { ascending: false }).limit(20000),
       supabase.from('games').select('*').order('game_num', { ascending: false }).limit(20),
       supabase.from('evolution_state').select('*').eq('id', 1).single(),
       supabase.from('strategies').select('id,spot_count,generation').eq('status', 'promoted').order('spot_count'),
@@ -148,6 +154,7 @@ export default function MonitorPage() {
 
     if (evts) setEvents(evts as SystemEvent[]);
     if (results) setLiveResults(results as LiveResult[]);
+    if (allResults) setAllLiveResults(allResults as LiveResult[]);
     if (games) setRecentGames(games as Game[]);
     if (evo) setEvoState(evo as EvolutionState);
     if (count !== null) setTotalGames(count);
@@ -216,6 +223,7 @@ export default function MonitorPage() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_results' },
         payload => {
           setLiveResults(prev => [payload.new as LiveResult, ...prev].slice(0, 200));
+          setAllLiveResults(prev => [payload.new as LiveResult, ...prev].slice(0, 20000));
         })
       .subscribe();
 
@@ -241,10 +249,13 @@ export default function MonitorPage() {
   const h24 = 24 * 3600 * 1000;
   const d7 = 7 * h24;
 
-  const computeBucket = (cutoff: number): { all: PerformanceBucket; bySpot: Map<number, PerformanceBucket> } => {
+  const computeBucket = (
+    cutoff: number,
+    source: LiveResult[] = liveResults
+  ): { all: PerformanceBucket; bySpot: Map<number, PerformanceBucket> } => {
     const all = emptyBucket();
     const bySpot = new Map<number, PerformanceBucket>();
-    for (const r of liveResults) {
+    for (const r of source) {
       if (cutoff !== 0 && now - new Date(r.scored_at).getTime() > cutoff) continue;
       all.total++;
       all.pnl += r.pnl;
@@ -263,7 +274,8 @@ export default function MonitorPage() {
 
   const { all: b24, bySpot: bs24 } = computeBucket(h24);
   const { all: b7d, bySpot: bs7d } = computeBucket(d7);
-  const { all: bAll, bySpot: bsAll } = computeBucket(0);
+  // All-time totals come from the unlimited fetch, not the 200-row-capped feed.
+  const { all: bAll, bySpot: bsAll } = computeBucket(0, allLiveResults);
 
   // Last event timestamps by type
   const lastPoll = events.find(e => e.event_type === 'poll_success' || e.event_type === 'poll_no_new_game');
@@ -285,6 +297,31 @@ export default function MonitorPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Live Monitor</h1>
+
+      {/* ── Top Cards: Overall Win/Loss Summary (all-time, all shadow plays) ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-surface rounded-xl p-5 border border-[#2a2a2e]">
+          <div className="text-xs text-slate-400 mb-1">Overall Game Win/Loss</div>
+          <div className="text-3xl font-bold">
+            <span className="text-green-400">{bAll.wins}W</span>
+            <span className="text-slate-500 mx-1.5">–</span>
+            <span className="text-red-400">{bAll.total - bAll.wins}L</span>
+          </div>
+          <div className="text-xs text-slate-500 mt-1">
+            {bAll.total.toLocaleString()} shadow plays scored ·{' '}
+            {bAll.total > 0 ? ((bAll.wins / bAll.total) * 100).toFixed(1) : '0.0'}% win rate
+          </div>
+        </div>
+        <div className="bg-surface rounded-xl p-5 border border-[#2a2a2e]">
+          <div className="text-xs text-slate-400 mb-1">Overall Dollar Win/Loss</div>
+          <div className={`text-3xl font-bold ${bAll.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {bAll.pnl >= 0 ? '+' : ''}${bAll.pnl.toFixed(2)}
+          </div>
+          <div className="text-xs text-slate-500 mt-1">
+            Net P&amp;L across all shadow plays · ${bAll.total > 0 ? (bAll.pnl / bAll.total).toFixed(3) : '0.000'}/game avg
+          </div>
+        </div>
+      </div>
 
       {/* ── Section 1: System Status Bar ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
