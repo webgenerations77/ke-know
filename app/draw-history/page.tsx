@@ -127,6 +127,7 @@ export default function DrawHistoryPage() {
               <tr className="text-slate-500 border-b border-[#2a2a2e]">
                 <th className="px-3 py-3 text-left">Game #</th>
                 <th className="px-3 py-3 text-left">Date</th>
+                <th className="px-3 py-3 text-left">Time</th>
                 <th className="px-3 py-3 text-left">Day</th>
                 <th className="px-3 py-3 text-center">B</th>
                 <th className="px-3 py-3 text-center">SB</th>
@@ -138,6 +139,9 @@ export default function DrawHistoryPage() {
                 <tr key={g.game_num} className="border-b border-[#1a1a1e] hover:bg-[#1e1e24]">
                   <td className="px-3 py-2.5 font-mono text-slate-400">{g.game_num}</td>
                   <td className="px-3 py-2.5 text-slate-400">{g.draw_date}</td>
+                  <td className="px-3 py-2.5 font-mono text-slate-500 whitespace-nowrap">
+                    {g.draw_iso ? new Date(g.draw_iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '—'}
+                  </td>
                   <td className="px-3 py-2.5 text-slate-500">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][g.draw_dow ?? 0] ?? '—'}</td>
                   <td className="px-3 py-2.5 text-center text-amber-400 font-bold">{g.bonus ?? '—'}</td>
                   <td className="px-3 py-2.5 text-center text-purple-400 font-bold">{g.super_bonus ?? '—'}</td>
