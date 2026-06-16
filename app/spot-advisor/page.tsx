@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, Game } from '@/lib/supabase';
+import { supabase, Game, Strategy, StrategyResult } from '@/lib/supabase';
 import {
   PRIZE_TABLE, OVERALL_ODDS, computeEV, hypergeoPMF,
   BONUS_DIST, SUPER_BONUS_DIST,
@@ -9,6 +9,12 @@ import {
 import {
   computeNumberStats, computeBonusDist, expectedMultiplierFromDist,
 } from '@/lib/analysis';
+import { describeGenome, type StrategyGenome } from '@/lib/evolution/genome';
+
+interface EvoChampion {
+  strategy: Strategy;
+  result: StrategyResult | null;
+}
 
 interface SpotRow {
   spots: number;
@@ -27,11 +33,21 @@ function fmtEv(ev: number, wager: number) {
   return (ev * wager).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function Ball({ n }: { n: number }) {
+  return (
+    <span className="inline-flex w-7 h-7 rounded-full items-center justify-center text-xs font-bold shrink-0 bg-crimson text-white">
+      {n}
+    </span>
+  );
+}
+
 export default function SpotAdvisorPage() {
   const [games, setGames] = useState<Game[]>([]);
   const [wager, setWager] = useState(1);
   const [wagerType, setWagerType] = useState<'classic' | 'pktg'>('classic');
   const [loading, setLoading] = useState(true);
+  const [evoChampion, setEvoChampion] = useState<EvoChampion | null>(null);
+  const [evoLoading, setEvoLoading] = useState(true);
 
   useEffect(() => {
     supabase.from('games').select('*').order('game_num', { ascending: false }).limit(5000)
@@ -39,6 +55,51 @@ export default function SpotAdvisorPage() {
         if (data) setGames(data as Game[]);
         setLoading(false);
       });
+  }, []);
+
+  // Pull the evolution engine's best promoted strategy (highest fitness score
+  // across all generations) to drive the headline recommendation.
+  useEffect(() => {
+    async function loadEvoChampion() {
+      const { data: strats } = await supabase
+        .from('strategies')
+        .select('*')
+        .eq('status', 'promoted');
+
+      if (!strats || strats.length === 0) {
+        setEvoLoading(false);
+        return;
+      }
+
+      const ids = (strats as Strategy[]).map(s => s.id);
+      const { data: results } = await supabase
+        .from('strategy_results')
+        .select('*')
+        .in('strategy_id', ids)
+        .order('evaluated_at', { ascending: false });
+
+      const latestByStrategy = new Map<number, StrategyResult>();
+      for (const r of (results ?? []) as StrategyResult[]) {
+        if (!latestByStrategy.has(r.strategy_id)) latestByStrategy.set(r.strategy_id, r);
+      }
+
+      let champ: Strategy | null = null;
+      let champResult: StrategyResult | null = null;
+      let bestFitness = -Infinity;
+      for (const s of strats as Strategy[]) {
+        const r = latestByStrategy.get(s.id) ?? null;
+        const fitness = r?.fitness_score ?? -999;
+        if (fitness > bestFitness) {
+          bestFitness = fitness;
+          champ = s;
+          champResult = r;
+        }
+      }
+
+      setEvoChampion(champ ? { strategy: champ, result: champResult } : null);
+      setEvoLoading(false);
+    }
+    loadEvoChampion();
   }, []);
 
   const effectiveWager = wagerType === 'pktg' ? wager * 0.25 : wager;
@@ -107,6 +168,70 @@ export default function SpotAdvisorPage() {
   return (
     <div className="space-y-6 max-w-4xl">
       <h1 className="text-2xl font-bold">Spot Advisor</h1>
+
+      {/* Recommendation callout — driven by the evolution engine's best
+          promoted strategy once one exists, falling back to the static
+          highest-EV spot count until the engine has produced a champion. */}
+      <div className="bg-crimson/10 border border-crimson/30 rounded-xl p-5 space-y-2">
+        <div className="flex items-center gap-2">
+          <h2 className="font-semibold text-crimson-light">Recommendation</h2>
+          {evoChampion && (
+            <span className="px-2 py-0.5 rounded-full bg-crimson/20 text-crimson-light text-[10px] font-semibold uppercase tracking-wide">
+              Evolution-Learned
+            </span>
+          )}
+        </div>
+
+        {!evoLoading && evoChampion ? (
+          <>
+            <p className="text-sm text-slate-300 leading-relaxed">
+              <strong className="text-white">Play {evoChampion.strategy.spot_count} spots</strong> — the top-performing
+              strategy bred across {evoChampion.strategy.generation} generations of evolution
+              (Strategy #{evoChampion.strategy.id}).
+              {evoChampion.result?.test_pnl_per_game != null && (
+                <>
+                  {' '}Backtested return:{' '}
+                  <strong className={evoChampion.result.test_pnl_per_game >= 0 ? 'text-green-400' : 'text-red-400'}>
+                    ${evoChampion.result.test_pnl_per_game.toFixed(3)}/game
+                  </strong>.
+                </>
+              )}
+              {evoChampion.result?.win_rate != null && (
+                <> Win rate: <strong>{(evoChampion.result.win_rate * 100).toFixed(1)}%</strong>.</>
+              )}
+            </p>
+            <p className="text-xs text-slate-400 italic">
+              {describeGenome(evoChampion.strategy.genome as unknown as StrategyGenome)}
+            </p>
+            {evoChampion.result?.picks_snapshot && evoChampion.result.picks_snapshot.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {evoChampion.result.picks_snapshot.map(n => <Ball key={n} n={n} />)}
+              </div>
+            )}
+            <p className="text-xs text-slate-500">
+              Generated by the evolution engine, which continuously backtests and mutates strategies against real
+              draw history and promotes the fittest. See Strategy Lab for the full leaderboard and lineage.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-slate-300 leading-relaxed">
+              <strong className="text-white">Play {bestSpots} spots</strong> — it has the highest expected return of{' '}
+              <strong className="text-green-400">{fmtEv(rows[bestIdx].evPerDollar * prizeScale, wager)}</strong> per ${wager} wager
+              (return ratio: {(rows[bestIdx].evPerDollar * 100).toFixed(1)}¢ per dollar wagered).
+              {rows[bestIdx].historicalHitRate !== null && (
+                <> Historical hit rate using top-scored numbers: <strong>{rows[bestIdx].historicalHitRate.toFixed(1)}%</strong>.</>
+              )}
+            </p>
+            <p className="text-xs text-slate-500">
+              EV is calculated from official Maryland Lottery prize tables using the hypergeometric probability distribution
+              (N=80, k=20 drawn). A higher EV per dollar means a better expected return — though all spot counts are
+              negative-EV in the long run (that's how lotteries work). This tool helps you choose the least-bad option.
+              {!evoLoading && ' No evolution champion has been promoted yet — once the engine promotes a strategy, this card will switch to its picks automatically.'}
+            </p>
+          </>
+        )}
+      </div>
 
       {/* Controls */}
       <div className="bg-surface rounded-xl p-4 flex flex-wrap gap-5 items-center">
@@ -184,24 +309,6 @@ export default function SpotAdvisorPage() {
             </tbody>
           </table>
         </div>
-      </div>
-
-      {/* Recommendation callout */}
-      <div className="bg-crimson/10 border border-crimson/30 rounded-xl p-5 space-y-2">
-        <h2 className="font-semibold text-crimson-light">Recommendation</h2>
-        <p className="text-sm text-slate-300 leading-relaxed">
-          <strong className="text-white">Play {bestSpots} spots</strong> — it has the highest expected return of{' '}
-          <strong className="text-green-400">{fmtEv(rows[bestIdx].evPerDollar * prizeScale, wager)}</strong> per ${wager} wager
-          (return ratio: {(rows[bestIdx].evPerDollar * 100).toFixed(1)}¢ per dollar wagered).
-          {rows[bestIdx].historicalHitRate !== null && (
-            <> Historical hit rate using top-scored numbers: <strong>{rows[bestIdx].historicalHitRate.toFixed(1)}%</strong>.</>
-          )}
-        </p>
-        <p className="text-xs text-slate-500">
-          EV is calculated from official Maryland Lottery prize tables using the hypergeometric probability distribution
-          (N=80, k=20 drawn). A higher EV per dollar means a better expected return — though all spot counts are
-          negative-EV in the long run (that's how lotteries work). This tool helps you choose the least-bad option.
-        </p>
       </div>
 
       {/* Bonus advisor */}
