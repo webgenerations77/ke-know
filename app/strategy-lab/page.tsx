@@ -73,7 +73,7 @@ export default function StrategyLabPage() {
         .order('evaluated_at', { ascending: false })
         .limit(2000),
       supabase.from('live_results')
-        .select('strategy_id,pnl,prize,scored_at')
+        .select('*')
         .order('scored_at', { ascending: false })
         .limit(1000),
       supabase.from('strategy_results')

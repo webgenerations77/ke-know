@@ -113,15 +113,9 @@ function PerfCol({
 export default function MonitorPage() {
   const [events, setEvents] = useState<SystemEvent[]>([]);
   const [liveResults, setLiveResults] = useState<LiveResult[]>([]);
-  // True all-time totals (unlike `liveResults`, which is capped to the most
-  // recent 200 rows for the live feed / rolling 24h-7d windows). Drives the
-  // overall win/loss summary cards and the "All time" rolling-performance column.
+  // True all-time totals for daily breakdown and rolling-performance columns.
   const [allLiveResults, setAllLiveResults] = useState<LiveResult[]>([]);
-  // strategy id → generation, for every strategy ever created (not just
-  // promoted ones) — live_results can reference strategies that have since
-  // been retired, so this needs the full set to break down by generation.
-  const [strategyGenById, setStrategyGenById] = useState<Map<number, number>>(new Map());
-  const [genBreakdownOpen, setGenBreakdownOpen] = useState(false);
+  const [dailyBreakdownOpen, setDailyBreakdownOpen] = useState(false);
   const [recentGames, setRecentGames] = useState<Game[]>([]);
   const [evoState, setEvoState] = useState<EvolutionState | null>(null);
   const [fitnessByGen, setFitnessByGen] = useState<{ generation: number; [key: string]: number }[]>([]);
@@ -132,13 +126,11 @@ export default function MonitorPage() {
   const [eventsPage, setEventsPage] = useState(1);
   const [mounted, setMounted] = useState(false);
 
-  // Load initial data
   const loadAll = useCallback(async () => {
     const [
       { data: evts },
       { data: results },
       { data: allResults },
-      { data: allStrategies },
       { data: games },
       { data: evo },
       { data: champs },
@@ -149,7 +141,6 @@ export default function MonitorPage() {
       supabase.from('system_events').select('*').order('occurred_at', { ascending: false }).limit(100),
       supabase.from('live_results').select('*').order('scored_at', { ascending: false }).limit(200),
       supabase.from('live_results').select('*').order('scored_at', { ascending: false }).limit(20000),
-      supabase.from('strategies').select('id,generation').limit(20000),
       supabase.from('games').select('*').order('game_num', { ascending: false }).limit(20),
       supabase.from('evolution_state').select('*').eq('id', 1).single(),
       supabase.from('strategies').select('id,spot_count,generation').eq('status', 'promoted').order('spot_count'),
@@ -162,17 +153,11 @@ export default function MonitorPage() {
     if (evts) setEvents(evts as SystemEvent[]);
     if (results) setLiveResults(results as LiveResult[]);
     if (allResults) setAllLiveResults(allResults as LiveResult[]);
-    if (allStrategies) {
-      setStrategyGenById(new Map(
-        (allStrategies as { id: number; generation: number }[]).map(s => [s.id, s.generation])
-      ));
-    }
     if (games) setRecentGames(games as Game[]);
     if (evo) setEvoState(evo as EvolutionState);
     if (count !== null) setTotalGames(count);
     if (latestGame) setLatestGameTs(latestGame.draw_iso);
 
-    // Build champion list with latest fitness
     if (champs) {
       const champData = await Promise.all(
         (champs as { id: number; spot_count: number; generation: number }[]).map(async c => {
@@ -189,7 +174,6 @@ export default function MonitorPage() {
       setChampions(champData);
     }
 
-    // Build fitness sparkline data
     if (genFitness) {
       const byGen = new Map<number, Map<number, number>>();
       for (const row of genFitness as { generation: number; spot_count: number; fitness_score: number | null }[]) {
@@ -214,14 +198,12 @@ export default function MonitorPage() {
     loadAll();
   }, [loadAll]);
 
-  // Realtime subscriptions
   useEffect(() => {
     const ch1 = supabase
       .channel('monitor_events')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'system_events' },
         payload => {
           setEvents(prev => [payload.new as SystemEvent, ...prev].slice(0, 100));
-          // Refresh status data on key events
           if (['sync_complete', 'evolution_complete', 'poll_success'].includes(
             (payload.new as SystemEvent).event_type
           )) {
@@ -256,7 +238,6 @@ export default function MonitorPage() {
     };
   }, [loadAll]);
 
-  // Compute live result stats
   const now = Date.now();
   const h24 = 24 * 3600 * 1000;
   const d7 = 7 * h24;
@@ -286,30 +267,27 @@ export default function MonitorPage() {
 
   const { all: b24, bySpot: bs24 } = computeBucket(h24);
   const { all: b7d, bySpot: bs7d } = computeBucket(d7);
-  // All-time totals come from the unlimited fetch, not the 200-row-capped feed.
   const { all: bAll, bySpot: bsAll } = computeBucket(0, allLiveResults);
 
-  // All-time win/loss broken down by evolution generation, for the drill-down
-  // under the overall summary cards.
-  const byGeneration = new Map<number, PerformanceBucket>();
+  // Group all-time results by local date (YYYY-MM-DD) for the daily summary cards
+  const todayKey = new Date().toLocaleDateString('en-CA');
+  const dailyMap = new Map<string, PerformanceBucket>();
   for (const r of allLiveResults) {
-    const gen = strategyGenById.get(r.strategy_id);
-    if (gen == null) continue;
-    const b = byGeneration.get(gen) ?? emptyBucket();
+    const dateKey = new Date(r.scored_at).toLocaleDateString('en-CA');
+    const b = dailyMap.get(dateKey) ?? emptyBucket();
     b.total++;
     b.pnl += r.pnl;
     if (r.prize > 0) b.wins++;
     if (r.prize > b.best) b.best = r.prize;
-    byGeneration.set(gen, b);
+    dailyMap.set(dateKey, b);
   }
-  const generationRows = [...byGeneration.entries()].sort((a, b) => a[0] - b[0]);
+  const bToday = dailyMap.get(todayKey) ?? emptyBucket();
+  const dailyRows = [...dailyMap.entries()].sort((a, b) => b[0].localeCompare(a[0]));
 
-  // Last event timestamps by type
   const lastPoll = events.find(e => e.event_type === 'poll_success' || e.event_type === 'poll_no_new_game');
   const lastSync = events.find(e => e.event_type === 'sync_complete');
   const lastEvo = events.find(e => e.event_type === 'evolution_complete');
 
-  // Build game → live results map
   const resultsByGame = new Map<number, LiveResult[]>();
   for (const r of liveResults) {
     const arr = resultsByGame.get(r.game_num) ?? [];
@@ -325,60 +303,76 @@ export default function MonitorPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Live Monitor</h1>
 
-      {/* ── Top Cards: Overall Win/Loss Summary (all-time, all shadow plays) ── */}
+      {/* ── TOP: Evolution + Database ── */}
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard
+          label="Evolution"
+          value={evoState?.current_generation ? `Gen ${evoState.current_generation}` : 'Not started'}
+          sub={evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
+          ok={!lastEvo || lastEvo.severity !== 'error'}
+        />
+        <StatCard
+          label="Database"
+          value={`${totalGames.toLocaleString()} games`}
+          sub={latestGameTs ? `Latest: ${fmtDate(latestGameTs)}` : undefined}
+          ok={minutesAgo(latestGameTs) < 10}
+        />
+      </div>
+
+      {/* ── Daily Win/Loss Summary ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <button
           type="button"
-          onClick={() => setGenBreakdownOpen(o => !o)}
+          onClick={() => setDailyBreakdownOpen(o => !o)}
           className="bg-surface rounded-xl p-5 border border-[#2a2a2e] text-left hover:border-crimson/40 transition-colors cursor-pointer"
         >
           <div className="text-xs text-slate-400 mb-1 flex items-center justify-between">
-            <span>Overall Game Win/Loss</span>
-            <span className="text-slate-600">{genBreakdownOpen ? '▲' : '▼'} by generation</span>
+            <span>Today's Game Win/Loss</span>
+            <span className="text-slate-600">{dailyBreakdownOpen ? '▲' : '▼'} daily history</span>
           </div>
           <div className="text-3xl font-bold">
-            <span className="text-green-400">{bAll.wins}W</span>
+            <span className="text-green-400">{bToday.wins}W</span>
             <span className="text-slate-500 mx-1.5">–</span>
-            <span className="text-red-400">{bAll.total - bAll.wins}L</span>
+            <span className="text-red-400">{bToday.total - bToday.wins}L</span>
           </div>
           <div className="text-xs text-slate-500 mt-1">
-            {bAll.total.toLocaleString()} shadow plays scored ·{' '}
-            {bAll.total > 0 ? ((bAll.wins / bAll.total) * 100).toFixed(1) : '0.0'}% win rate
+            {bToday.total.toLocaleString()} shadow plays today ·{' '}
+            {bToday.total > 0 ? ((bToday.wins / bToday.total) * 100).toFixed(1) : '0.0'}% win rate
           </div>
         </button>
         <button
           type="button"
-          onClick={() => setGenBreakdownOpen(o => !o)}
+          onClick={() => setDailyBreakdownOpen(o => !o)}
           className="bg-surface rounded-xl p-5 border border-[#2a2a2e] text-left hover:border-crimson/40 transition-colors cursor-pointer"
         >
           <div className="text-xs text-slate-400 mb-1 flex items-center justify-between">
-            <span>Overall Dollar Win/Loss</span>
-            <span className="text-slate-600">{genBreakdownOpen ? '▲' : '▼'} by generation</span>
+            <span>Today's Dollar Win/Loss</span>
+            <span className="text-slate-600">{dailyBreakdownOpen ? '▲' : '▼'} daily history</span>
           </div>
-          <div className={`text-3xl font-bold ${bAll.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {bAll.pnl >= 0 ? '+' : ''}${bAll.pnl.toFixed(2)}
+          <div className={`text-3xl font-bold ${bToday.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {bToday.pnl >= 0 ? '+' : ''}${bToday.pnl.toFixed(2)}
           </div>
           <div className="text-xs text-slate-500 mt-1">
-            Net P&amp;L across all shadow plays · ${bAll.total > 0 ? (bAll.pnl / bAll.total).toFixed(3) : '0.000'}/game avg
+            Net P&amp;L today · ${bToday.total > 0 ? (bToday.pnl / bToday.total).toFixed(3) : '0.000'}/game avg
           </div>
         </button>
       </div>
 
-      {/* ── Win/Loss by Generation drill-down ── */}
-      {genBreakdownOpen && (
+      {/* ── Daily history drill-down ── */}
+      {dailyBreakdownOpen && (
         <div className="bg-surface rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
-            <h2 className="font-semibold text-sm">Win/Loss by Generation</h2>
-            <span className="text-xs text-slate-500">{generationRows.length} generations</span>
+            <h2 className="font-semibold text-sm">Daily Win/Loss History</h2>
+            <span className="text-xs text-slate-500">{dailyRows.length} days</span>
           </div>
           <div className="overflow-x-auto max-h-96">
-            {generationRows.length === 0 ? (
+            {dailyRows.length === 0 ? (
               <p className="px-4 py-6 text-slate-500 text-sm">No scored shadow plays yet.</p>
             ) : (
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-surface z-10">
                   <tr className="text-slate-500 border-b border-[#2a2a2e]">
-                    <th className="px-4 py-2 text-left">Generation</th>
+                    <th className="px-4 py-2 text-left">Date</th>
                     <th className="px-4 py-2 text-left">Games (W–L)</th>
                     <th className="px-4 py-2 text-right">Win Rate</th>
                     <th className="px-4 py-2 text-right">Net P&amp;L</th>
@@ -387,9 +381,17 @@ export default function MonitorPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {generationRows.map(([gen, b]) => (
-                    <tr key={gen} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
-                      <td className="px-4 py-2 font-mono text-slate-300">Gen {gen}</td>
+                  {dailyRows.map(([date, b]) => (
+                    <tr
+                      key={date}
+                      className={`border-b border-[#1e1e24] hover:bg-[#1e1e24] ${date === todayKey ? 'bg-[#16161a]' : ''}`}
+                    >
+                      <td className="px-4 py-2 font-mono text-slate-300">
+                        {date}
+                        {date === todayKey && (
+                          <span className="ml-2 text-crimson text-[10px] font-semibold uppercase tracking-wide">Today</span>
+                        )}
+                      </td>
                       <td className="px-4 py-2">
                         <span className="text-green-400">{b.wins}W</span>
                         <span className="text-slate-500 mx-1">–</span>
@@ -414,8 +416,8 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* ── Section 1: System Status Bar ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* ── Poll + Sync Status ── */}
+      <div className="grid grid-cols-2 gap-3">
         <StatCard
           label="Poll (every 4 min)"
           value={lastPoll ? fmt(lastPoll.occurred_at) : 'Waiting…'}
@@ -428,21 +430,9 @@ export default function MonitorPage() {
           sub={lastSync ? `${minutesAgo(lastSync.occurred_at).toFixed(0)} min ago` : undefined}
           ok={minutesAgo(lastSync?.occurred_at) < 65}
         />
-        <StatCard
-          label="Evolution"
-          value={evoState?.current_generation ? `Gen ${evoState.current_generation}` : 'Not started'}
-          sub={evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
-          ok={!lastEvo || lastEvo.severity !== 'error'}
-        />
-        <StatCard
-          label="Database"
-          value={`${totalGames.toLocaleString()} games`}
-          sub={latestGameTs ? `Latest: ${fmtDate(latestGameTs)}` : undefined}
-          ok={minutesAgo(latestGameTs) < 10}
-        />
       </div>
 
-      {/* ── Section 2: Live Game Feed ── */}
+      {/* ── Live Game Feed ── */}
       <div className="bg-surface rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
           <h2 className="font-semibold text-sm">Live Game & Prediction Feed</h2>
@@ -507,11 +497,10 @@ export default function MonitorPage() {
         </div>
       </div>
 
-      {/* ── Section 3: Evolution Pulse ── */}
+      {/* ── Evolution Pulse ── */}
       <div className="bg-surface rounded-xl p-4">
         <h2 className="font-semibold text-sm mb-4">Evolution Pulse</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Champions per spot count */}
           <div>
             <div className="text-xs text-slate-500 mb-2">Current Champions</div>
             <div className="grid grid-cols-5 gap-2">
@@ -541,7 +530,6 @@ export default function MonitorPage() {
             </div>
           </div>
 
-          {/* Fitness sparkline */}
           <div>
             <div className="text-xs text-slate-500 mb-2">Best Fitness by Generation (last 48)</div>
             {fitnessByGen.length > 1 ? (
@@ -574,7 +562,7 @@ export default function MonitorPage() {
         </div>
       </div>
 
-      {/* ── Section 4: Rolling Performance ── */}
+      {/* ── Rolling Performance ── */}
       <div className="bg-surface rounded-xl p-4">
         <h2 className="font-semibold text-sm mb-4">Rolling Performance (shadow plays)</h2>
         <div className="grid grid-cols-3 divide-x divide-[#2a2a2e] gap-0">
@@ -590,7 +578,7 @@ export default function MonitorPage() {
         </div>
       </div>
 
-      {/* ── Section 5: Activity Log ── */}
+      {/* ── Activity Log ── */}
       <div className="bg-surface rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
           <h2 className="font-semibold text-sm">Activity Log</h2>
@@ -629,7 +617,7 @@ export default function MonitorPage() {
         </div>
       </div>
 
-      {/* ── Section 6: Cron Health Validator ── */}
+      {/* ── Cron Health Validator ── */}
       <div className="bg-surface rounded-xl p-4">
         <h2 className="font-semibold text-sm mb-4">Cron Health Validator</h2>
         <div className="space-y-4">
