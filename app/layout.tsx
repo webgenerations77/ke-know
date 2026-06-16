@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Image from 'next/image';
 import './globals.css';
 import { Sidebar } from '@/components/Sidebar';
 import { ToastProvider } from '@/components/Toast';
@@ -16,8 +17,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="flex min-h-screen">
             <Sidebar />
             <main className="flex-1 min-w-0 flex flex-col">
-              <header className="flex justify-end items-center px-4 md:px-8 py-3 border-b border-[#1e1e24]">
-                <span className="text-lg font-bold text-crimson tracking-widest">KE-KNOW</span>
+              <header className="flex justify-end items-center px-4 md:px-8 py-2 border-b border-[#1e1e24]">
+                <Image
+                  src="/Logo-Keno.png"
+                  alt="KE-KNOW"
+                  width={120}
+                  height={40}
+                  style={{ height: '36px', width: 'auto', objectFit: 'contain' }}
+                  priority
+                />
               </header>
               <div className="flex-1 p-4 md:p-6 md:pl-8">
                 {children}
