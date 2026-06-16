@@ -568,17 +568,33 @@ export default function MonitorPage() {
                             </span>
                           ))}
                         </div>
+                        {(game.bonus || game.super_bonus) && (
+                          <div className="flex gap-2 mt-1">
+                            {game.bonus && (
+                              <span className="text-[9px] text-amber-400 font-semibold">B:{game.bonus}</span>
+                            )}
+                            {game.super_bonus && (
+                              <span className="text-[9px] text-purple-400 font-semibold">SB:{game.super_bonus}</span>
+                            )}
+                          </div>
+                        )}
                       </td>
                       {[1,2,3,4,5,6,7,8,9,10].map(s => {
                         const r = bySpot.get(s);
                         if (!r) return <td key={s} className="px-1 py-2 text-center text-slate-700">—</td>;
                         const color = r.pnl > 0 ? 'text-green-400' : r.pnl === 0 ? 'text-slate-400' : 'text-red-400';
+                        const bonusBadge = r.bonus_type === 'bonus'
+                          ? <span className="text-[8px] text-amber-400 font-semibold">B×{r.bonus_multiplier}</span>
+                          : r.bonus_type === 'super_bonus'
+                          ? <span className="text-[8px] text-purple-400 font-semibold">SB×{r.bonus_multiplier}</span>
+                          : null;
                         return (
                           <td key={s} className={`px-1 py-2 text-center ${color}`}>
                             {r.matches}/{s}<br />
                             <span className="text-[10px]">
                               {r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(0)}
                             </span>
+                            {bonusBadge && <><br />{bonusBadge}</>}
                           </td>
                         );
                       })}
