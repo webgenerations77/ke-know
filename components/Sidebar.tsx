@@ -31,9 +31,9 @@ export function Sidebar() {
         <Image
           src="/Logo-Keno.png"
           alt="KE-KNOW"
-          width={200}
-          height={80}
-          style={{ height: '60px', width: 'auto', objectFit: 'contain' }}
+          width={300}
+          height={100}
+          style={{ height: '80px', width: 'auto', objectFit: 'contain' }}
         />
         <p className="text-xs text-slate-500 mt-1.5">MD Keno Predictor</p>
       </div>

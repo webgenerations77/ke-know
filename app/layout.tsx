@@ -17,13 +17,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="flex min-h-screen">
             <Sidebar />
             <main className="flex-1 min-w-0 flex flex-col">
-              <header className="flex justify-end items-center px-4 md:px-8 py-2 border-b border-[#1e1e24]">
+              <header className="flex justify-end items-center px-4 md:px-8 py-3 border-b border-[#1e1e24]">
                 <Image
                   src="/Logo-Keno.png"
                   alt="KE-KNOW"
-                  width={200}
-                  height={70}
-                  style={{ height: '52px', width: 'auto', objectFit: 'contain' }}
+                  width={320}
+                  height={100}
+                  style={{ height: '72px', width: 'auto', objectFit: 'contain' }}
                   priority
                 />
               </header>
