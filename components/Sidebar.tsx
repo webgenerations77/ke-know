@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { SyncStatus } from './SyncStatus';
@@ -28,14 +27,7 @@ export function Sidebar() {
   const nav = (
     <nav className="flex flex-col h-full">
       <div className="px-4 py-4 border-b border-[#2a2a2e]">
-        <Image
-          src="/Logo-Keno.png"
-          alt="KE-KNOW"
-          width={300}
-          height={100}
-          style={{ height: '80px', width: 'auto', objectFit: 'contain' }}
-        />
-        <p className="text-xs text-slate-500 mt-1.5">MD Keno Predictor</p>
+        <p className="text-xs text-slate-500">MD Keno Predictor</p>
       </div>
       <ul className="flex-1 py-4 overflow-y-auto">
         {NAV.map(({ href, label, icon }) => {

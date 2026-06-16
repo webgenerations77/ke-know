@@ -21,9 +21,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Image
                   src="/Logo-Keno.png"
                   alt="KE-KNOW"
-                  width={320}
-                  height={100}
-                  style={{ height: '72px', width: 'auto', objectFit: 'contain' }}
+                  width={640}
+                  height={200}
+                  style={{ height: '144px', width: 'auto', objectFit: 'contain' }}
                   priority
                 />
               </header>
