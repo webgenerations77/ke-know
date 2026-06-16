@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
 import { useToast } from '@/components/Toast';
+import { useRouter } from 'next/navigation';
 
 const BATCH = 100;
 const TARGET = 5000;
@@ -11,6 +12,8 @@ const DELAY_MS = 150;
 
 export default function DataIngestionPage() {
   const { toast } = useToast();
+  const router = useRouter();
+  const [syncing, setSyncing] = useState(false);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [log, setLog] = useState<string[]>([]);
@@ -42,6 +45,22 @@ export default function DataIngestionPage() {
   }
 
   useEffect(() => { loadStats(); }, []);
+
+  async function handleSync() {
+    setSyncing(true);
+    try {
+      const res = await fetch('/api/sync-manual', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Sync failed');
+      toast(`Sync complete — ${data.gamesAdded ?? 0} game(s) added, evolution ran: ${data.evolutionRan ? 'yes' : 'no'}`, 'success');
+      await loadStats();
+      router.refresh();
+    } catch (e) {
+      toast(String(e), 'error');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function startBackfill() {
     setRunning(true);
@@ -166,6 +185,22 @@ export default function DataIngestionPage() {
             <div className="text-sm font-semibold mt-0.5">{value}</div>
           </div>
         ))}
+      </div>
+
+      {/* Sync Now */}
+      <div className="bg-surface rounded-xl p-5 space-y-4">
+        <h2 className="font-semibold">Sync &amp; Evolve</h2>
+        <p className="text-sm text-slate-400">
+          Pulls any new draws from the Maryland Keno API, scores pending predictions, and runs one evolution generation.
+          Use this to kick-start Arthur after applying DB migrations.
+        </p>
+        <button
+          onClick={handleSync}
+          disabled={syncing}
+          className="px-5 py-2.5 rounded-lg bg-crimson hover:bg-crimson-hover disabled:opacity-50 text-white text-sm font-medium transition-colors"
+        >
+          {syncing ? 'Running…' : 'Sync Now'}
+        </button>
       </div>
 
       {/* Backfill */}
