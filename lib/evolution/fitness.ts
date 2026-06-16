@@ -32,12 +32,16 @@ function computeWeight(genome: StrategyGenome, pos: number): number {
 /**
  * Score all 80 numbers using the lookback window ending just before evalIdx.
  * Returns an array indexed 1-80 (index 0 unused).
+ * `lastSeenScratch` is a caller-owned Int32Array(81) reused across calls to
+ * avoid allocating on every evaluation — this function runs up to ~allGames.length
+ * times per strategy, so per-call allocations here dominate evolution runtime.
  */
 function scoreNumbers(
   genome: StrategyGenome,
   allGames: Game[],
   evalIdx: number,
-  scores: Float64Array
+  scores: Float64Array,
+  lastSeenScratch: Int32Array
 ): void {
   scores.fill(0);
   const lookback = genome.lookback_games;
@@ -54,15 +58,17 @@ function scoreNumbers(
 
   // Gap bonus: reward numbers not seen recently
   if (genome.gap_weight > 0) {
-    const lastSeen = new Int32Array(81).fill(-1);
+    lastSeenScratch.fill(-1);
     for (let j = startIdx; j < evalIdx; j++) {
       const pos = evalIdx - 1 - j;
-      for (const n of allGames[j].hits) {
-        if (lastSeen[n] === -1) lastSeen[n] = pos;
+      const hits = allGames[j].hits;
+      for (let k = 0; k < hits.length; k++) {
+        const n = hits[k];
+        if (lastSeenScratch[n] === -1) lastSeenScratch[n] = pos;
       }
     }
     for (let n = 1; n <= 80; n++) {
-      const gap = lastSeen[n] === -1 ? 999 : lastSeen[n];
+      const gap = lastSeenScratch[n] === -1 ? 999 : lastSeenScratch[n];
       if (gap > genome.gap_threshold) {
         scores[n] += genome.gap_weight * (scores[n] + 0.001);
       }
@@ -70,12 +76,31 @@ function scoreNumbers(
   }
 }
 
-/** Select top N numbers by score. Returns sorted array of picks. */
-function selectTopN(scores: Float64Array, n: number): number[] {
-  const ranked: { num: number; score: number }[] = [];
-  for (let i = 1; i <= 80; i++) ranked.push({ num: i, score: scores[i] });
-  ranked.sort((a, b) => b.score - a.score);
-  return ranked.slice(0, n).map(x => x.num);
+/**
+ * Select the top N numbers by score via a small insertion-sort into caller-owned
+ * scratch buffers — avoids the object-array allocation + full sort of all 80
+ * candidates that a naive `[...].sort()` would do on every evaluation.
+ */
+function selectTopNInto(
+  scores: Float64Array,
+  n: number,
+  topIdx: Int32Array,
+  topScore: Float64Array
+): void {
+  for (let i = 0; i < n; i++) topScore[i] = -Infinity;
+  for (let num = 1; num <= 80; num++) {
+    const s = scores[num];
+    if (s > topScore[n - 1]) {
+      let pos = n - 1;
+      while (pos > 0 && topScore[pos - 1] < s) {
+        topScore[pos] = topScore[pos - 1];
+        topIdx[pos] = topIdx[pos - 1];
+        pos--;
+      }
+      topScore[pos] = s;
+      topIdx[pos] = num;
+    }
+  }
 }
 
 /**
@@ -91,7 +116,10 @@ export function simulateStrategy(
   testStartIdx: number
 ): SimResult {
   const scores = new Float64Array(81);
-  let lastPicks: number[] = [];
+  const lastSeenScratch = new Int32Array(81);
+  const topIdx = new Int32Array(spotCount);
+  const topScore = new Float64Array(spotCount);
+  const lastPicksBuf = new Int32Array(spotCount);
 
   let trainPnl = 0, trainGames = 0, trainWins = 0;
   let testPnl = 0, testGames = 0, testWins = 0;
@@ -104,13 +132,18 @@ export function simulateStrategy(
     const inTest = i >= testStartIdx;
     if (!inTraining && !inTest) continue;
 
-    scoreNumbers(genome, allGames, i, scores);
-    const picks = selectTopN(scores, spotCount);
-    lastPicks = picks;
+    scoreNumbers(genome, allGames, i, scores, lastSeenScratch);
+    selectTopNInto(scores, spotCount, topIdx, topScore);
+    lastPicksBuf.set(topIdx);
 
-    const hitSet = new Set(allGames[i].hits);
+    const hits = allGames[i].hits;
     let matches = 0;
-    for (const p of picks) if (hitSet.has(p)) matches++;
+    for (let p = 0; p < spotCount; p++) {
+      const pick = topIdx[p];
+      for (let h = 0; h < hits.length; h++) {
+        if (hits[h] === pick) { matches++; break; }
+      }
+    }
 
     const prize = lookupPrize(spotCount, matches);
     const pnl = prize - 1;
@@ -133,6 +166,7 @@ export function simulateStrategy(
 
   const totalGames = trainGames + testGames;
   const totalWins = trainWins + testWins;
+  const lastPicks = Array.from(lastPicksBuf);
 
   return {
     training_pnl: trainPnl,
@@ -159,8 +193,12 @@ export function generatePicks(
   allGames: Game[]
 ): number[] {
   const scores = new Float64Array(81);
-  scoreNumbers(genome, allGames, allGames.length, scores);
-  return selectTopN(scores, spotCount);
+  const lastSeenScratch = new Int32Array(81);
+  const topIdx = new Int32Array(spotCount);
+  const topScore = new Float64Array(spotCount);
+  scoreNumbers(genome, allGames, allGames.length, scores, lastSeenScratch);
+  selectTopNInto(scores, spotCount, topIdx, topScore);
+  return Array.from(topIdx);
 }
 
 /**

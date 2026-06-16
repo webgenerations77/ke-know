@@ -3,6 +3,9 @@ import { createServiceClient } from '@/lib/supabase-server';
 import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
 import { runEvolution } from '@/lib/evolution/evolve';
 
+// Backfill + one evolution generation can take longer than the platform default.
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   const auth = req.headers.get('Authorization') ?? '';
   const expected = `Bearer ${process.env.CRON_SECRET}`;

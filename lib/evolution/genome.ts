@@ -19,7 +19,7 @@ export interface StrategyGenome {
 }
 
 export const GENOME_RANGES: Record<keyof StrategyGenome, [number | string, number | string]> = {
-  lookback_games:           [50,   5000],
+  lookback_games:           [50,   400],
   weighting_method:         ['raw', 'exponential_decay'],
   decay_rate:               [0.001, 0.1],
   recency_boost_cutoff:     [1,    20],
@@ -52,7 +52,7 @@ function randInt(min: number, max: number): number {
 
 export function randomGenome(): StrategyGenome {
   return {
-    lookback_games:           randInt(50, 5000),
+    lookback_games:           randInt(50, 400),
     weighting_method:         WEIGHTING_METHODS[Math.floor(Math.random() * 3)],
     decay_rate:               rand(0.001, 0.1),
     recency_boost_cutoff:     randInt(1, 20),

@@ -6,6 +6,8 @@ import { generatePicks } from '@/lib/evolution/fitness';
 import type { StrategyGenome } from '@/lib/evolution/genome';
 import type { Game } from '@/lib/supabase';
 
+export const maxDuration = 30;
+
 export async function POST(req: NextRequest) {
   const auth = req.headers.get('Authorization') ?? '';
   if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
