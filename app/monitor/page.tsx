@@ -117,6 +117,11 @@ export default function MonitorPage() {
   // recent 200 rows for the live feed / rolling 24h-7d windows). Drives the
   // overall win/loss summary cards and the "All time" rolling-performance column.
   const [allLiveResults, setAllLiveResults] = useState<LiveResult[]>([]);
+  // strategy id → generation, for every strategy ever created (not just
+  // promoted ones) — live_results can reference strategies that have since
+  // been retired, so this needs the full set to break down by generation.
+  const [strategyGenById, setStrategyGenById] = useState<Map<number, number>>(new Map());
+  const [genBreakdownOpen, setGenBreakdownOpen] = useState(false);
   const [recentGames, setRecentGames] = useState<Game[]>([]);
   const [evoState, setEvoState] = useState<EvolutionState | null>(null);
   const [fitnessByGen, setFitnessByGen] = useState<{ generation: number; [key: string]: number }[]>([]);
@@ -133,6 +138,7 @@ export default function MonitorPage() {
       { data: evts },
       { data: results },
       { data: allResults },
+      { data: allStrategies },
       { data: games },
       { data: evo },
       { data: champs },
@@ -143,6 +149,7 @@ export default function MonitorPage() {
       supabase.from('system_events').select('*').order('occurred_at', { ascending: false }).limit(100),
       supabase.from('live_results').select('*').order('scored_at', { ascending: false }).limit(200),
       supabase.from('live_results').select('*').order('scored_at', { ascending: false }).limit(20000),
+      supabase.from('strategies').select('id,generation').limit(20000),
       supabase.from('games').select('*').order('game_num', { ascending: false }).limit(20),
       supabase.from('evolution_state').select('*').eq('id', 1).single(),
       supabase.from('strategies').select('id,spot_count,generation').eq('status', 'promoted').order('spot_count'),
@@ -155,6 +162,11 @@ export default function MonitorPage() {
     if (evts) setEvents(evts as SystemEvent[]);
     if (results) setLiveResults(results as LiveResult[]);
     if (allResults) setAllLiveResults(allResults as LiveResult[]);
+    if (allStrategies) {
+      setStrategyGenById(new Map(
+        (allStrategies as { id: number; generation: number }[]).map(s => [s.id, s.generation])
+      ));
+    }
     if (games) setRecentGames(games as Game[]);
     if (evo) setEvoState(evo as EvolutionState);
     if (count !== null) setTotalGames(count);
@@ -277,6 +289,21 @@ export default function MonitorPage() {
   // All-time totals come from the unlimited fetch, not the 200-row-capped feed.
   const { all: bAll, bySpot: bsAll } = computeBucket(0, allLiveResults);
 
+  // All-time win/loss broken down by evolution generation, for the drill-down
+  // under the overall summary cards.
+  const byGeneration = new Map<number, PerformanceBucket>();
+  for (const r of allLiveResults) {
+    const gen = strategyGenById.get(r.strategy_id);
+    if (gen == null) continue;
+    const b = byGeneration.get(gen) ?? emptyBucket();
+    b.total++;
+    b.pnl += r.pnl;
+    if (r.prize > 0) b.wins++;
+    if (r.prize > b.best) b.best = r.prize;
+    byGeneration.set(gen, b);
+  }
+  const generationRows = [...byGeneration.entries()].sort((a, b) => a[0] - b[0]);
+
   // Last event timestamps by type
   const lastPoll = events.find(e => e.event_type === 'poll_success' || e.event_type === 'poll_no_new_game');
   const lastSync = events.find(e => e.event_type === 'sync_complete');
@@ -300,8 +327,15 @@ export default function MonitorPage() {
 
       {/* ── Top Cards: Overall Win/Loss Summary (all-time, all shadow plays) ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-surface rounded-xl p-5 border border-[#2a2a2e]">
-          <div className="text-xs text-slate-400 mb-1">Overall Game Win/Loss</div>
+        <button
+          type="button"
+          onClick={() => setGenBreakdownOpen(o => !o)}
+          className="bg-surface rounded-xl p-5 border border-[#2a2a2e] text-left hover:border-crimson/40 transition-colors cursor-pointer"
+        >
+          <div className="text-xs text-slate-400 mb-1 flex items-center justify-between">
+            <span>Overall Game Win/Loss</span>
+            <span className="text-slate-600">{genBreakdownOpen ? '▲' : '▼'} by generation</span>
+          </div>
           <div className="text-3xl font-bold">
             <span className="text-green-400">{bAll.wins}W</span>
             <span className="text-slate-500 mx-1.5">–</span>
@@ -311,17 +345,74 @@ export default function MonitorPage() {
             {bAll.total.toLocaleString()} shadow plays scored ·{' '}
             {bAll.total > 0 ? ((bAll.wins / bAll.total) * 100).toFixed(1) : '0.0'}% win rate
           </div>
-        </div>
-        <div className="bg-surface rounded-xl p-5 border border-[#2a2a2e]">
-          <div className="text-xs text-slate-400 mb-1">Overall Dollar Win/Loss</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setGenBreakdownOpen(o => !o)}
+          className="bg-surface rounded-xl p-5 border border-[#2a2a2e] text-left hover:border-crimson/40 transition-colors cursor-pointer"
+        >
+          <div className="text-xs text-slate-400 mb-1 flex items-center justify-between">
+            <span>Overall Dollar Win/Loss</span>
+            <span className="text-slate-600">{genBreakdownOpen ? '▲' : '▼'} by generation</span>
+          </div>
           <div className={`text-3xl font-bold ${bAll.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
             {bAll.pnl >= 0 ? '+' : ''}${bAll.pnl.toFixed(2)}
           </div>
           <div className="text-xs text-slate-500 mt-1">
             Net P&amp;L across all shadow plays · ${bAll.total > 0 ? (bAll.pnl / bAll.total).toFixed(3) : '0.000'}/game avg
           </div>
-        </div>
+        </button>
       </div>
+
+      {/* ── Win/Loss by Generation drill-down ── */}
+      {genBreakdownOpen && (
+        <div className="bg-surface rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
+            <h2 className="font-semibold text-sm">Win/Loss by Generation</h2>
+            <span className="text-xs text-slate-500">{generationRows.length} generations</span>
+          </div>
+          <div className="overflow-x-auto max-h-96">
+            {generationRows.length === 0 ? (
+              <p className="px-4 py-6 text-slate-500 text-sm">No scored shadow plays yet.</p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface z-10">
+                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                    <th className="px-4 py-2 text-left">Generation</th>
+                    <th className="px-4 py-2 text-left">Games (W–L)</th>
+                    <th className="px-4 py-2 text-right">Win Rate</th>
+                    <th className="px-4 py-2 text-right">Net P&amp;L</th>
+                    <th className="px-4 py-2 text-right">P&amp;L / game</th>
+                    <th className="px-4 py-2 text-right">Best Win</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {generationRows.map(([gen, b]) => (
+                    <tr key={gen} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                      <td className="px-4 py-2 font-mono text-slate-300">Gen {gen}</td>
+                      <td className="px-4 py-2">
+                        <span className="text-green-400">{b.wins}W</span>
+                        <span className="text-slate-500 mx-1">–</span>
+                        <span className="text-red-400">{b.total - b.wins}L</span>
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {b.total > 0 ? `${((b.wins / b.total) * 100).toFixed(1)}%` : '—'}
+                      </td>
+                      <td className={`px-4 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(2)}
+                      </td>
+                      <td className={`px-4 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
+                      </td>
+                      <td className="px-4 py-2 text-right">${b.best}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Section 1: System Status Bar ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

@@ -1,6 +1,7 @@
 import { createServiceClient } from '@/lib/supabase-server';
 import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
 import { runEvolution } from '@/lib/evolution/evolve';
+import { scorePendingPredictions } from '@/lib/score-predictions';
 
 export interface SyncResult {
   gamesAdded: number;
@@ -77,7 +78,14 @@ export async function performSync(db: ReturnType<typeof createServiceClient>): P
       metadata: { games_added: totalAdded, latest_game_num: latestNum },
     });
 
-    // ---- 2. Run evolution ----
+    // ---- 2. Score any pending predictions whose target game just landed ----
+    // Backfilled games arrive here in bulk rather than one at a time via
+    // /api/poll, so they need their own scoring pass — otherwise their
+    // pending_predictions would sit unscored forever (shown as gaps in the
+    // Live Monitor feed) and real_world_plays/pnl would miss them.
+    const scoredCount = await scorePendingPredictions(db);
+
+    // ---- 3. Run evolution ----
     let evolutionRan = false;
     let evolutionResult: object = {};
 
@@ -98,7 +106,7 @@ export async function performSync(db: ReturnType<typeof createServiceClient>): P
       } catch { /* best-effort logging */ }
     }
 
-    return { gamesAdded: totalAdded, evolutionRan, ...evolutionResult };
+    return { gamesAdded: totalAdded, predictionsScored: scoredCount, evolutionRan, ...evolutionResult };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[sync]', msg);

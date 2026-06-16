@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase-server';
 import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
-import { lookupPrize } from '@/lib/keno/prizes';
 import { generatePicks } from '@/lib/evolution/fitness';
+import { scorePendingPredictions } from '@/lib/score-predictions';
 import type { StrategyGenome } from '@/lib/evolution/genome';
 import type { Game } from '@/lib/supabase';
 
@@ -17,100 +17,79 @@ export async function POST(req: NextRequest) {
   const db = createServiceClient();
 
   try {
-    // 1. Fetch latest game from API
+    // 1. Find current max game already stored
+    const { data: maxRow } = await db
+      .from('games')
+      .select('game_num')
+      .order('game_num', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const maxInDb: number = maxRow?.game_num ?? 0;
+
+    // 2. Check the latest drawing from the API
     const latest = await fetchDrawings(1);
     if (!latest.length) {
       await logEvent(db, 'poll_error', 'error', 'API returned no drawings');
       return NextResponse.json({ ok: true, action: 'no_data' });
     }
+    const latestNum = parseInt(latest[0].drawNumber, 10);
 
-    const gameNum = parseInt(latest[0].drawNumber, 10);
+    // 3. Catch up on every game missed since the last poll/sync — not just
+    // the single most recent draw. If poll runs every 4 min but a draw lands
+    // every 4 min too, drift or a missed cron-job.org invocation can mean
+    // more than one new game is waiting; inserting only the latest would
+    // silently skip the rest (they'd never get scored or shown).
+    let insertedCount = 0;
+    if (latestNum > maxInDb) {
+      let cursor = latestNum;
+      const MAX_BATCHES = 20;
+      const allNew: ReturnType<typeof parseDrawing>[] = [];
 
-    // 2. Check if already in DB
-    const { data: existing } = await db
-      .from('games')
-      .select('game_num')
-      .eq('game_num', gameNum)
-      .maybeSingle();
+      for (let i = 0; i < MAX_BATCHES; i++) {
+        const drawings = await fetchDrawings(100, cursor);
+        if (!drawings.length) break;
 
-    if (existing) {
-      await logEvent(db, 'poll_no_new_game', 'info',
-        `Poll: game #${gameNum} already stored`, { game_num: gameNum });
-      return NextResponse.json({ ok: true, action: 'no_new_game', game_num: gameNum });
-    }
+        const newDrawings = drawings.filter(d => parseInt(d.drawNumber, 10) > maxInDb);
+        allNew.push(...newDrawings.map(parseDrawing));
 
-    // 3. Insert new game
-    const row = parseDrawing(latest[0]);
-    const { error: insertErr } = await db.from('games').insert(row);
-    if (insertErr) throw new Error(`Failed to insert game: ${insertErr.message}`);
+        if (newDrawings.length < drawings.length) break;
 
-    await logEvent(db, 'poll_success', 'success',
-      `New game #${gameNum} ingested (${row.draw_date})`,
-      { game_num: gameNum, draw_date: row.draw_date });
+        const lowestInBatch = Math.min(...drawings.map(d => parseInt(d.drawNumber, 10)));
+        if (lowestInBatch <= maxInDb) break;
+        cursor = lowestInBatch - 1;
+      }
 
-    const actualHits: number[] = latest[0].results.hits;
+      if (allNew.length > 0) {
+        const { error: insertErr } = await db
+          .from('games')
+          .upsert(allNew, { onConflict: 'game_num', ignoreDuplicates: true });
+        if (insertErr) throw new Error(`Failed to insert games: ${insertErr.message}`);
+        insertedCount = allNew.length;
 
-    // 4. Score pending predictions for this game
-    const { data: pending } = await db
-      .from('pending_predictions')
-      .select('id,strategy_id,spot_count,picks')
-      .eq('predicted_for_game_num', gameNum)
-      .eq('scored', false);
-
-    const strategyUpdates: Map<number, { plays: number; pnl: number }> = new Map();
-
-    for (const pred of pending ?? []) {
-      const picks: number[] = pred.picks;
-      const hitSet = new Set(actualHits);
-      let matches = 0;
-      for (const p of picks) if (hitSet.has(p)) matches++;
-
-      const prize = lookupPrize(pred.spot_count, matches);
-      const pnl = prize - 1;
-
-      // Insert live result
-      await db.from('live_results').insert({
-        strategy_id: pred.strategy_id,
-        game_num: gameNum,
-        spot_count: pred.spot_count,
-        picks,
-        actual_hits: actualHits,
-        matches,
-        prize,
-        pnl,
-        is_shadow_play: true,
-      });
-
-      // Mark prediction scored
-      await db.from('pending_predictions').update({ scored: true }).eq('id', pred.id);
-
-      // Accumulate strategy stat updates
-      const existing = strategyUpdates.get(pred.strategy_id) ?? { plays: 0, pnl: 0 };
-      strategyUpdates.set(pred.strategy_id, { plays: existing.plays + 1, pnl: existing.pnl + pnl });
-
-      await logEvent(db, 'prediction_scored', pnl > 0 ? 'success' : 'info',
-        `${pred.spot_count}-spot strategy #${pred.strategy_id}: ${matches} matches, P&L $${pnl.toFixed(2)}`,
-        { strategy_id: pred.strategy_id, spot_count: pred.spot_count, matches, prize, pnl, game_num: gameNum });
-    }
-
-    // 5. Update strategy stats in bulk
-    for (const [strategyId, stats] of strategyUpdates) {
-      const { data: current } = await db
-        .from('strategies')
-        .select('real_world_plays,real_world_pnl')
-        .eq('id', strategyId)
-        .maybeSingle();
-
-      if (current) {
-        await db.from('strategies').update({
-          real_world_plays: (current.real_world_plays ?? 0) + stats.plays,
-          real_world_pnl: (current.real_world_pnl ?? 0) + stats.pnl,
-        }).eq('id', strategyId);
+        await logEvent(db, 'poll_success', 'success',
+          `Poll ingested ${insertedCount} new game(s) up to #${latestNum}`,
+          { count: insertedCount, latest_game_num: latestNum });
       }
     }
 
-    // 6. Commit predictions for next game
-    const nextGameNum = gameNum + 1;
+    if (insertedCount === 0) {
+      await logEvent(db, 'poll_no_new_game', 'info',
+        `Poll: already up to date at game #${maxInDb}`, { game_num: maxInDb });
+    }
+
+    // 4. Score every outstanding pending prediction whose target game now
+    // exists — covers games inserted just now by this poll *and* any
+    // inserted earlier by sync's backfill that never got scored.
+    const scoredCount = await scorePendingPredictions(db);
+
+    // 5. Commit predictions for the game right after the true current max
+    const { data: maxAfterRow } = await db
+      .from('games')
+      .select('game_num')
+      .order('game_num', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const nextGameNum = (maxAfterRow?.game_num ?? maxInDb) + 1;
 
     const { data: promoted } = await db
       .from('strategies')
@@ -118,7 +97,6 @@ export async function POST(req: NextRequest) {
       .eq('status', 'promoted');
 
     if (promoted && promoted.length > 0) {
-      // Load recent games for pick generation
       const { data: recentGames } = await db
         .from('games')
         .select('game_num,draw_date,draw_iso,draw_dow,bonus,super_bonus,hits')
@@ -146,9 +124,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      action: 'new_game',
-      game_num: gameNum,
-      predictions_scored: pending?.length ?? 0,
+      action: insertedCount > 0 ? 'new_games' : 'no_new_game',
+      games_added: insertedCount,
+      latest_game_num: latestNum,
+      predictions_scored: scoredCount,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
