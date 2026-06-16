@@ -5,7 +5,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine,
 } from 'recharts';
-import { supabase, Game, SyncLog } from '@/lib/supabase';
+import { supabase, Game, SyncLog, Strategy, StrategyResult, EvolutionState } from '@/lib/supabase';
 import { computeNumberStats } from '@/lib/analysis';
 import { computePrediction, computeMomentum, DOW_LABELS } from '@/lib/prediction-engine';
 
@@ -34,6 +34,9 @@ export default function DashboardPage() {
   const [games, setGames] = useState<Game[]>([]);
   const [totalDbCount, setTotalDbCount] = useState(0);
   const [syncLog, setSyncLog] = useState<SyncLog[]>([]);
+  const [evoState, setEvoState] = useState<EvolutionState | null>(null);
+  const [overallChamp, setOverallChamp] = useState<(Strategy & { fitness: number | null }) | null>(null);
+  const [evoTrend, setEvoTrend] = useState<'improving' | 'plateauing' | 'regressing' | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Filters
@@ -46,10 +49,54 @@ export default function DashboardPage() {
       supabase.from('games').select('*', { count: 'exact', head: true }),
       supabase.from('games').select('*').order('game_num', { ascending: false }).limit(5000),
       supabase.from('sync_log').select('*').order('synced_at', { ascending: false }).limit(10),
-    ]).then(([{ count }, { data: gData }, { data: sData }]) => {
+      supabase.from('evolution_state').select('*').eq('id', 1).maybeSingle(),
+      supabase.from('strategies').select('*').eq('status', 'promoted').limit(50),
+      supabase.from('strategy_results').select('generation,fitness_score').order('generation', { ascending: false }).limit(2000),
+    ]).then(([{ count }, { data: gData }, { data: sData }, { data: evoData }, { data: promotedData }, { data: gfData }]) => {
       setTotalDbCount(count ?? 0);
       if (gData) setGames(gData as Game[]);
       if (sData) setSyncLog(sData as SyncLog[]);
+      if (evoData) setEvoState(evoData as EvolutionState);
+
+      // Resolve overall champion among promoted strategies via their latest strategy_results row
+      (async () => {
+        const promoted = (promotedData ?? []) as Strategy[];
+        if (promoted.length === 0) { setOverallChamp(null); return; }
+        const { data: results } = await supabase
+          .from('strategy_results')
+          .select('*')
+          .in('strategy_id', promoted.map(p => p.id))
+          .order('evaluated_at', { ascending: false })
+          .limit(500);
+        const latestByStrategy = new Map<number, StrategyResult>();
+        for (const r of (results ?? []) as StrategyResult[]) {
+          if (!latestByStrategy.has(r.strategy_id)) latestByStrategy.set(r.strategy_id, r);
+        }
+        let best: Strategy | null = null;
+        let bestFitness = -Infinity;
+        for (const p of promoted) {
+          const f = latestByStrategy.get(p.id)?.fitness_score ?? -Infinity;
+          if (f > bestFitness) { bestFitness = f; best = p; }
+        }
+        setOverallChamp(best ? { ...best, fitness: bestFitness === -Infinity ? null : bestFitness } : null);
+      })();
+
+      // Trend: best fitness of latest generation vs the one before it
+      if (gfData) {
+        const byGen = new Map<number, number>();
+        for (const row of gfData as { generation: number; fitness_score: number | null }[]) {
+          const cur = byGen.get(row.generation) ?? -Infinity;
+          if ((row.fitness_score ?? -Infinity) > cur) byGen.set(row.generation, row.fitness_score ?? -Infinity);
+        }
+        const gens = [...byGen.keys()].sort((a, b) => b - a);
+        if (gens.length >= 2) {
+          const latest = byGen.get(gens[0])!;
+          const prev = byGen.get(gens[1])!;
+          const delta = latest - prev;
+          setEvoTrend(delta > 0.005 ? 'improving' : delta < -0.005 ? 'regressing' : 'plateauing');
+        }
+      }
+
       setLoading(false);
     });
   }, []);
@@ -229,6 +276,51 @@ export default function DashboardPage() {
           }
         />
       </div>
+
+      {/* ── Evolution status ────────────────────────────────────────────────── */}
+      {evoState && (
+        <div className="bg-surface rounded-xl p-4">
+          <div className="flex justify-between items-center mb-3">
+            <h2 className="text-sm font-semibold text-slate-300">Evolution Engine</h2>
+            <a href="/strategy-lab" className="text-xs text-crimson hover:underline">Strategy Lab →</a>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <div className="text-xs text-slate-500">Generation</div>
+              <div className="text-lg font-bold text-white">{evoState.current_generation}</div>
+            </div>
+            <div>
+              <div className="text-xs text-slate-500">Last Run</div>
+              <div className="text-lg font-bold text-white">
+                {evoState.last_run_at ? new Date(evoState.last_run_at).toLocaleString() : '—'}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-slate-500">Champion</div>
+              <div className="text-lg font-bold text-white">
+                {overallChamp ? `${overallChamp.spot_count}-spot` : '—'}
+              </div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                {overallChamp?.fitness != null ? `Fitness ${overallChamp.fitness.toFixed(4)}` : 'No promoted strategy yet'}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-slate-500">Trend</div>
+              <div className={`text-lg font-bold ${
+                evoTrend === 'improving' ? 'text-green-400'
+                  : evoTrend === 'regressing' ? 'text-red-400'
+                  : evoTrend === 'plateauing' ? 'text-yellow-400'
+                  : 'text-slate-500'
+              }`}>
+                {evoTrend === 'improving' ? '↑ Improving'
+                  : evoTrend === 'regressing' ? '↓ Regressing'
+                  : evoTrend === 'plateauing' ? '→ Plateauing'
+                  : '—'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {filteredGames.length < 50 && (
         <div className="bg-yellow-900/20 border border-yellow-800 rounded-xl p-4 text-sm text-yellow-300">

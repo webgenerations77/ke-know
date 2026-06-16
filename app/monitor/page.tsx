@@ -1,0 +1,566 @@
+'use client';
+
+import { useEffect, useState, useCallback } from 'react';
+import { supabase } from '@/lib/supabase';
+import type { SystemEvent, LiveResult, Game, EvolutionState } from '@/lib/supabase';
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+} from 'recharts';
+
+const EVENT_ICONS: Record<string, string> = {
+  success: '🟢',
+  info: '🔵',
+  warning: '🟡',
+  error: '🔴',
+};
+
+function fmt(ts: string | null | undefined): string {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleTimeString();
+}
+
+function fmtDate(ts: string | null | undefined): string {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+}
+
+function minutesAgo(ts: string | null | undefined): number {
+  if (!ts) return 9999;
+  return (Date.now() - new Date(ts).getTime()) / 60000;
+}
+
+function Dot({ ok }: { ok: boolean }) {
+  return (
+    <span
+      className={`inline-block w-2.5 h-2.5 rounded-full mr-2 ${ok ? 'bg-green-400' : 'bg-red-500'}`}
+    />
+  );
+}
+
+function StatCard({
+  label, value, sub, ok,
+}: { label: string; value: string; sub?: string; ok?: boolean }) {
+  return (
+    <div className="bg-surface rounded-xl p-4 flex flex-col gap-1">
+      <div className="flex items-center text-xs text-slate-400 gap-1">
+        {ok !== undefined && <Dot ok={ok} />}
+        {label}
+      </div>
+      <div className="text-lg font-bold text-white truncate">{value}</div>
+      {sub && <div className="text-xs text-slate-500">{sub}</div>}
+    </div>
+  );
+}
+
+interface PerformanceBucket {
+  total: number;
+  wins: number;
+  pnl: number;
+  best: number;
+}
+
+function emptyBucket(): PerformanceBucket {
+  return { total: 0, wins: 0, pnl: 0, best: 0 };
+}
+
+function PerfCol({
+  label, bucket, bySpot,
+}: { label: string; bucket: PerformanceBucket; bySpot: Map<number, PerformanceBucket> }) {
+  return (
+    <div>
+      <div className="text-xs font-semibold text-slate-400 mb-3">{label}</div>
+      <div className="space-y-1 text-xs">
+        <div className="flex justify-between">
+          <span className="text-slate-500">Predictions</span>
+          <span className="font-mono">{bucket.total}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-slate-500">Win rate</span>
+          <span className="font-mono">
+            {bucket.total > 0 ? ((bucket.wins / bucket.total) * 100).toFixed(1) : 0}%
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-slate-500">P&L / game</span>
+          <span className={`font-mono ${bucket.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {bucket.total > 0 ? `$${(bucket.pnl / bucket.total).toFixed(2)}` : '—'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-slate-500">Best win</span>
+          <span className="font-mono">${bucket.best}</span>
+        </div>
+      </div>
+      <div className="mt-3 space-y-0.5">
+        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(s => {
+          const b = bySpot.get(s);
+          if (!b || b.total === 0) return null;
+          return (
+            <div key={s} className="flex justify-between text-xs">
+              <span className="text-slate-600">{s}-spot</span>
+              <span className={b.pnl >= 0 ? 'text-green-500' : 'text-red-500'}>
+                ${(b.pnl / b.total).toFixed(2)}/g
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default function MonitorPage() {
+  const [events, setEvents] = useState<SystemEvent[]>([]);
+  const [liveResults, setLiveResults] = useState<LiveResult[]>([]);
+  const [recentGames, setRecentGames] = useState<Game[]>([]);
+  const [evoState, setEvoState] = useState<EvolutionState | null>(null);
+  const [fitnessByGen, setFitnessByGen] = useState<{ generation: number; [key: string]: number }[]>([]);
+  const [champions, setChampions] = useState<{ spot_count: number; fitness_score: number | null; id: number; generation: number }[]>([]);
+  const [totalGames, setTotalGames] = useState(0);
+  const [latestGameTs, setLatestGameTs] = useState<string | null>(null);
+  const [expandedEvent, setExpandedEvent] = useState<number | null>(null);
+  const [eventsPage, setEventsPage] = useState(1);
+  const [mounted, setMounted] = useState(false);
+
+  // Load initial data
+  const loadAll = useCallback(async () => {
+    const [
+      { data: evts },
+      { data: results },
+      { data: games },
+      { data: evo },
+      { data: champs },
+      { data: genFitness },
+      { count },
+      { data: latestGame },
+    ] = await Promise.all([
+      supabase.from('system_events').select('*').order('occurred_at', { ascending: false }).limit(100),
+      supabase.from('live_results').select('*').order('scored_at', { ascending: false }).limit(200),
+      supabase.from('games').select('*').order('game_num', { ascending: false }).limit(20),
+      supabase.from('evolution_state').select('*').eq('id', 1).single(),
+      supabase.from('strategies').select('id,spot_count,generation').eq('status', 'promoted').order('spot_count'),
+      supabase.from('strategy_results').select('generation,spot_count,fitness_score')
+        .order('generation', { ascending: true }).limit(500),
+      supabase.from('games').select('game_num', { count: 'exact', head: true }),
+      supabase.from('games').select('draw_iso').order('game_num', { ascending: false }).limit(1).maybeSingle(),
+    ]);
+
+    if (evts) setEvents(evts as SystemEvent[]);
+    if (results) setLiveResults(results as LiveResult[]);
+    if (games) setRecentGames(games as Game[]);
+    if (evo) setEvoState(evo as EvolutionState);
+    if (count !== null) setTotalGames(count);
+    if (latestGame) setLatestGameTs(latestGame.draw_iso);
+
+    // Build champion list with latest fitness
+    if (champs) {
+      const champData = await Promise.all(
+        (champs as { id: number; spot_count: number; generation: number }[]).map(async c => {
+          const { data: r } = await supabase
+            .from('strategy_results')
+            .select('fitness_score')
+            .eq('strategy_id', c.id)
+            .order('evaluated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          return { ...c, fitness_score: r?.fitness_score ?? null };
+        })
+      );
+      setChampions(champData);
+    }
+
+    // Build fitness sparkline data
+    if (genFitness) {
+      const byGen = new Map<number, Map<number, number>>();
+      for (const row of genFitness as { generation: number; spot_count: number; fitness_score: number | null }[]) {
+        if (!byGen.has(row.generation)) byGen.set(row.generation, new Map());
+        const genMap = byGen.get(row.generation)!;
+        const current = genMap.get(row.spot_count) ?? -999;
+        if ((row.fitness_score ?? -999) > current) {
+          genMap.set(row.spot_count, row.fitness_score ?? 0);
+        }
+      }
+      const last48 = [...byGen.entries()].sort((a, b) => a[0] - b[0]).slice(-48);
+      setFitnessByGen(last48.map(([gen, spotMap]) => {
+        const entry: { generation: number; [key: string]: number } = { generation: gen };
+        for (const [spot, fit] of spotMap) entry[`s${spot}`] = fit;
+        return entry;
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    setMounted(true);
+    loadAll();
+  }, [loadAll]);
+
+  // Realtime subscriptions
+  useEffect(() => {
+    const ch1 = supabase
+      .channel('monitor_events')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'system_events' },
+        payload => {
+          setEvents(prev => [payload.new as SystemEvent, ...prev].slice(0, 100));
+          // Refresh status data on key events
+          if (['sync_complete', 'evolution_complete', 'poll_success'].includes(
+            (payload.new as SystemEvent).event_type
+          )) {
+            loadAll();
+          }
+        })
+      .subscribe();
+
+    const ch2 = supabase
+      .channel('monitor_live_results')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_results' },
+        payload => {
+          setLiveResults(prev => [payload.new as LiveResult, ...prev].slice(0, 200));
+        })
+      .subscribe();
+
+    const ch3 = supabase
+      .channel('monitor_games')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'games' },
+        payload => {
+          setRecentGames(prev => [payload.new as Game, ...prev].slice(0, 20));
+          setTotalGames(n => n + 1);
+          setLatestGameTs((payload.new as Game).draw_iso);
+        })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch1);
+      supabase.removeChannel(ch2);
+      supabase.removeChannel(ch3);
+    };
+  }, [loadAll]);
+
+  // Compute live result stats
+  const now = Date.now();
+  const h24 = 24 * 3600 * 1000;
+  const d7 = 7 * h24;
+
+  const computeBucket = (cutoff: number): { all: PerformanceBucket; bySpot: Map<number, PerformanceBucket> } => {
+    const all = emptyBucket();
+    const bySpot = new Map<number, PerformanceBucket>();
+    for (const r of liveResults) {
+      if (cutoff !== 0 && now - new Date(r.scored_at).getTime() > cutoff) continue;
+      all.total++;
+      all.pnl += r.pnl;
+      if (r.prize > 0) all.wins++;
+      if (r.prize > all.best) all.best = r.prize;
+
+      const sb = bySpot.get(r.spot_count) ?? emptyBucket();
+      sb.total++;
+      sb.pnl += r.pnl;
+      if (r.prize > 0) sb.wins++;
+      if (r.prize > sb.best) sb.best = r.prize;
+      bySpot.set(r.spot_count, sb);
+    }
+    return { all, bySpot };
+  };
+
+  const { all: b24, bySpot: bs24 } = computeBucket(h24);
+  const { all: b7d, bySpot: bs7d } = computeBucket(d7);
+  const { all: bAll, bySpot: bsAll } = computeBucket(0);
+
+  // Last event timestamps by type
+  const lastPoll = events.find(e => e.event_type === 'poll_success' || e.event_type === 'poll_no_new_game');
+  const lastSync = events.find(e => e.event_type === 'sync_complete');
+  const lastEvo = events.find(e => e.event_type === 'evolution_complete');
+
+  // Build game → live results map
+  const resultsByGame = new Map<number, LiveResult[]>();
+  for (const r of liveResults) {
+    const arr = resultsByGame.get(r.game_num) ?? [];
+    arr.push(r);
+    resultsByGame.set(r.game_num, arr);
+  }
+
+  const SPOT_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899','#94a3b8','#f1f5f9'];
+
+  if (!mounted) return null;
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold">Live Monitor</h1>
+
+      {/* ── Section 1: System Status Bar ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard
+          label="Poll (every 4 min)"
+          value={lastPoll ? fmt(lastPoll.occurred_at) : 'Waiting…'}
+          sub={lastPoll ? `${minutesAgo(lastPoll.occurred_at).toFixed(1)} min ago` : undefined}
+          ok={minutesAgo(lastPoll?.occurred_at) < 6}
+        />
+        <StatCard
+          label="Sync (hourly)"
+          value={lastSync ? fmt(lastSync.occurred_at) : 'Waiting…'}
+          sub={lastSync ? `${minutesAgo(lastSync.occurred_at).toFixed(0)} min ago` : undefined}
+          ok={minutesAgo(lastSync?.occurred_at) < 65}
+        />
+        <StatCard
+          label="Evolution"
+          value={evoState?.current_generation ? `Gen ${evoState.current_generation}` : 'Not started'}
+          sub={evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
+          ok={!lastEvo || lastEvo.severity !== 'error'}
+        />
+        <StatCard
+          label="Database"
+          value={`${totalGames.toLocaleString()} games`}
+          sub={latestGameTs ? `Latest: ${fmtDate(latestGameTs)}` : undefined}
+          ok={minutesAgo(latestGameTs) < 10}
+        />
+      </div>
+
+      {/* ── Section 2: Live Game Feed ── */}
+      <div className="bg-surface rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
+          <h2 className="font-semibold text-sm">Live Game & Prediction Feed</h2>
+          <span className="text-xs text-slate-500">Last 20 games · live</span>
+        </div>
+        <div className="overflow-x-auto">
+          {recentGames.length === 0 ? (
+            <p className="px-4 py-6 text-slate-500 text-sm">No games yet.</p>
+          ) : (
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                  <th className="px-3 py-2 text-left">Game</th>
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Numbers Drawn</th>
+                  <th className="px-3 py-2 text-center" colSpan={10}>Spot predictions (matches · P&L)</th>
+                </tr>
+                <tr className="text-slate-600 border-b border-[#2a2a2e]">
+                  <th colSpan={3} />
+                  {[1,2,3,4,5,6,7,8,9,10].map(s => (
+                    <th key={s} className="px-1 py-1 text-center">{s}sp</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {recentGames.map(game => {
+                  const gameResults = resultsByGame.get(game.game_num) ?? [];
+                  const bySpot = new Map(gameResults.map(r => [r.spot_count, r]));
+                  return (
+                    <tr key={game.game_num} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                      <td className="px-3 py-2 font-mono text-slate-400">#{game.game_num}</td>
+                      <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{game.draw_date}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-0.5">
+                          {[...game.hits].sort((a, b) => a - b).map(n => (
+                            <span key={n}
+                              className="w-5 h-5 rounded-full bg-[#2a2a2e] text-slate-300 flex items-center justify-center text-[10px] font-bold">
+                              {n}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      {[1,2,3,4,5,6,7,8,9,10].map(s => {
+                        const r = bySpot.get(s);
+                        if (!r) return <td key={s} className="px-1 py-2 text-center text-slate-700">—</td>;
+                        const color = r.pnl > 0 ? 'text-green-400' : r.pnl === 0 ? 'text-slate-400' : 'text-red-400';
+                        return (
+                          <td key={s} className={`px-1 py-2 text-center ${color}`}>
+                            {r.matches}/{s}<br />
+                            <span className="text-[10px]">
+                              {r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(0)}
+                            </span>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* ── Section 3: Evolution Pulse ── */}
+      <div className="bg-surface rounded-xl p-4">
+        <h2 className="font-semibold text-sm mb-4">Evolution Pulse</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Champions per spot count */}
+          <div>
+            <div className="text-xs text-slate-500 mb-2">Current Champions</div>
+            <div className="grid grid-cols-5 gap-2">
+              {[1,2,3,4,5,6,7,8,9,10].map(s => {
+                const champ = champions.find(c => c.spot_count === s);
+                return (
+                  <div key={s} className="bg-[#0e0e10] rounded-lg p-2 text-center">
+                    <div className="text-xs text-slate-500">{s}-sp</div>
+                    {champ ? (
+                      <>
+                        <div className="text-xs font-mono text-crimson">
+                          #{champ.id}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          G{champ.generation}
+                        </div>
+                        <div className="text-[10px] text-green-400">
+                          {champ.fitness_score !== null ? champ.fitness_score.toFixed(3) : '—'}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-xs text-slate-600 mt-1">—</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Fitness sparkline */}
+          <div>
+            <div className="text-xs text-slate-500 mb-2">Best Fitness by Generation (last 48)</div>
+            {fitnessByGen.length > 1 ? (
+              <ResponsiveContainer width="100%" height={140}>
+                <LineChart data={fitnessByGen} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                  <XAxis dataKey="generation" tick={{ fontSize: 9 }} />
+                  <YAxis tick={{ fontSize: 9 }} />
+                  <Tooltip
+                    contentStyle={{ background: '#16161a', border: '1px solid #333', fontSize: 11 }}
+                    formatter={(v: number) => v.toFixed(4)}
+                  />
+                  {[1,2,3,4,5,6,7,8,9,10].map((s, i) => (
+                    <Line
+                      key={s}
+                      dataKey={`s${s}`}
+                      dot={false}
+                      strokeWidth={1.5}
+                      stroke={SPOT_COLORS[i]}
+                      name={`${s}-sp`}
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-36 flex items-center justify-center text-slate-600 text-sm">
+                Run evolution first to see fitness trends
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Section 4: Rolling Performance ── */}
+      <div className="bg-surface rounded-xl p-4">
+        <h2 className="font-semibold text-sm mb-4">Rolling Performance (shadow plays)</h2>
+        <div className="grid grid-cols-3 divide-x divide-[#2a2a2e] gap-0">
+          {[
+            { label: 'Last 24h', bucket: b24, bySpot: bs24 },
+            { label: 'Last 7 days', bucket: b7d, bySpot: bs7d },
+            { label: 'All time', bucket: bAll, bySpot: bsAll },
+          ].map(col => (
+            <div key={col.label} className="px-4 first:pl-0 last:pr-0">
+              <PerfCol label={col.label} bucket={col.bucket} bySpot={col.bySpot} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Section 5: Activity Log ── */}
+      <div className="bg-surface rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
+          <h2 className="font-semibold text-sm">Activity Log</h2>
+          <span className="text-xs text-slate-500">{events.length} events · live</span>
+        </div>
+        <div className="divide-y divide-[#1e1e24] max-h-96 overflow-y-auto">
+          {events.slice(0, eventsPage * 50).map(evt => (
+            <div key={evt.id}>
+              <button
+                className="w-full text-left px-4 py-2 hover:bg-[#1e1e24] flex items-start gap-2"
+                onClick={() => setExpandedEvent(expandedEvent === evt.id ? null : evt.id)}
+              >
+                <span className="shrink-0 mt-0.5">{EVENT_ICONS[evt.severity] ?? '⚪'}</span>
+                <span className="text-[10px] text-slate-500 shrink-0 mt-0.5 font-mono">
+                  {fmt(evt.occurred_at)}
+                </span>
+                <span className="text-xs text-slate-300 text-left">{evt.message}</span>
+              </button>
+              {expandedEvent === evt.id && evt.metadata && (
+                <div className="px-10 pb-2">
+                  <pre className="text-[10px] text-slate-500 bg-[#0e0e10] rounded p-2 overflow-x-auto">
+                    {JSON.stringify(evt.metadata, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          ))}
+          {eventsPage * 50 < events.length && (
+            <button
+              className="w-full py-2 text-xs text-slate-500 hover:text-white"
+              onClick={() => setEventsPage(p => p + 1)}
+            >
+              Load more
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Section 6: Cron Health Validator ── */}
+      <div className="bg-surface rounded-xl p-4">
+        <h2 className="font-semibold text-sm mb-4">Cron Health Validator</h2>
+        <div className="space-y-4">
+          {[
+            {
+              path: '/api/poll',
+              interval: '4 min',
+              threshold: 6,
+              lastEvent: lastPoll,
+            },
+            {
+              path: '/api/sync',
+              interval: '60 min',
+              threshold: 65,
+              lastEvent: lastSync,
+            },
+          ].map(cron => {
+            const ago = minutesAgo(cron.lastEvent?.occurred_at);
+            const healthy = ago < cron.threshold;
+            const url = `https://ke-know.vercel.app${cron.path}`;
+            return (
+              <div key={cron.path} className="bg-[#0e0e10] rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Dot ok={healthy} />
+                  <span className="font-mono text-sm text-white">{cron.path}</span>
+                  <span className="text-xs text-slate-500">— expected every {cron.interval}</span>
+                  <span className={`ml-auto text-xs font-semibold ${healthy ? 'text-green-400' : 'text-amber-400'}`}>
+                    {healthy ? '✅ Healthy' : '⚠️ Overdue'}
+                  </span>
+                </div>
+                {cron.lastEvent && (
+                  <p className="text-xs text-slate-500">
+                    Last called {ago.toFixed(1)} minutes ago ({fmtDate(cron.lastEvent.occurred_at)})
+                  </p>
+                )}
+                <div className="grid grid-cols-1 gap-2 text-xs font-mono">
+                  {[
+                    { label: 'URL', value: url },
+                    { label: 'Method', value: 'POST' },
+                    { label: 'Header', value: 'Authorization: Bearer YOUR_CRON_SECRET' },
+                    { label: 'Schedule', value: cron.path === '/api/poll' ? 'Every 4 minutes' : 'Every 60 minutes' },
+                  ].map(f => (
+                    <div key={f.label} className="flex items-center gap-2">
+                      <span className="text-slate-600 w-16 shrink-0">{f.label}</span>
+                      <span className="bg-[#16161a] rounded px-2 py-1 text-slate-300 flex-1 truncate">{f.value}</span>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(f.value)}
+                        className="text-slate-500 hover:text-white px-2 py-1 rounded border border-[#333] shrink-0"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}

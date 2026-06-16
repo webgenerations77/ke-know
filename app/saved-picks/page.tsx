@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase, SavedPick } from '@/lib/supabase';
 import { PRIZE_TABLE } from '@/lib/keno-odds';
+import { lookupPrize } from '@/lib/keno/prizes';
 import { useToast } from '@/components/Toast';
 
 const BONUS_LABELS: Record<string, string> = {
@@ -16,13 +17,17 @@ const STRATEGY_LABELS: Record<string, string> = {
   balanced: 'Balanced',
   cold: 'Cold',
   streak: 'Streak',
+  evolved: 'Evolved',
 };
 
 interface ResultModal {
   open: boolean;
   pickId: number;
+  spotCount: number;
+  strategyId: number | null;
   gameNum: string;
   matches: string;
+  prize: number;
 }
 
 export default function SavedPicksPage() {
@@ -33,7 +38,7 @@ export default function SavedPicksPage() {
   const [filterStrategy, setFilterStrategy] = useState('');
   const [deleting, setDeleting] = useState<number | null>(null);
   const [resultModal, setResultModal] = useState<ResultModal>({
-    open: false, pickId: 0, gameNum: '', matches: '',
+    open: false, pickId: 0, spotCount: 0, strategyId: null, gameNum: '', matches: '', prize: 0,
   });
 
   const load = useCallback(async () => {
@@ -55,15 +60,69 @@ export default function SavedPicksPage() {
     toast('Pick deleted', 'info');
   }
 
+  function openResultModal(pick: SavedPick) {
+    setResultModal({
+      open: true,
+      pickId: pick.id,
+      spotCount: pick.spot_count,
+      strategyId: pick.strategy_id ?? null,
+      gameNum: pick.result_game_num?.toString() ?? '',
+      matches: pick.result_matches?.toString() ?? '',
+      prize: 0,
+    });
+  }
+
+  // Live prize preview as user enters matches
+  function onMatchesChange(value: string) {
+    const m = parseInt(value);
+    const prize = !isNaN(m) ? lookupPrize(resultModal.spotCount, m) : 0;
+    setResultModal(prev => ({ ...prev, matches: value, prize }));
+  }
+
   async function logResult() {
-    const { pickId, gameNum, matches } = resultModal;
+    const { pickId, gameNum, matches, strategyId, prize } = resultModal;
     if (!gameNum || !matches) { toast('Fill in both fields', 'error'); return; }
+
+    const matchCount = parseInt(matches);
+    const gameNumInt = parseInt(gameNum);
+    const pnl = prize - 1;
+
+    // Update saved pick
     const { error } = await supabase
       .from('saved_picks')
-      .update({ result_game_num: parseInt(gameNum), result_matches: parseInt(matches) })
+      .update({
+        result_game_num: gameNumInt,
+        result_matches: matchCount,
+        result_pnl: pnl,
+      })
       .eq('id', pickId);
     if (error) { toast(error.message, 'error'); return; }
-    toast('Result logged', 'success');
+
+    // Update strategy real_world stats if linked
+    if (strategyId !== null) {
+      const { data: current } = await supabase
+        .from('strategies')
+        .select('real_world_plays,real_world_pnl')
+        .eq('id', strategyId)
+        .maybeSingle();
+
+      if (current) {
+        await supabase.from('strategies').update({
+          real_world_plays: (current.real_world_plays ?? 0) + 1,
+          real_world_pnl: (current.real_world_pnl ?? 0) + pnl,
+        }).eq('id', strategyId);
+      }
+
+      // Log to system_events
+      await supabase.from('system_events').insert({
+        event_type: 'prediction_scored',
+        severity: pnl > 0 ? 'success' : 'info',
+        message: `Real-world result logged: strategy #${strategyId} — ${matchCount} matches, P&L $${pnl.toFixed(2)} (game #${gameNumInt})`,
+        metadata: { strategy_id: strategyId, game_num: gameNumInt, matches: matchCount, prize, pnl, source: 'manual' },
+      });
+    }
+
+    toast(`Result logged — ${prize > 0 ? `won $${prize}` : 'no prize'} (P&L: ${pnl >= 0 ? '+' : ''}$${pnl})`, 'success');
     setResultModal(m => ({ ...m, open: false }));
     await load();
   }
@@ -74,21 +133,34 @@ export default function SavedPicksPage() {
     return true;
   });
 
-  // Performance summary from picks with results
+  // Performance summary
   const withResults = picks.filter(p => p.result_matches !== null);
   const totalPlayed = withResults.length;
   const totalMatches = withResults.reduce((s, p) => s + (p.result_matches ?? 0), 0);
   const avgMatches = totalPlayed > 0 ? totalMatches / totalPlayed : 0;
+  const totalPnl = withResults.reduce((s, p) => s + (p.result_pnl ?? 0), 0);
   const bestResult = withResults.length > 0
     ? Math.max(...withResults.map(p => p.result_matches ?? 0))
     : 0;
 
-  // Win rate: % of played picks that hit at least minimum winning catch for their spot count
   const wins = withResults.filter(p => {
     const prizes = PRIZE_TABLE[p.spot_count] ?? [];
     const minCatch = prizes.length > 0 ? Math.min(...prizes.map(x => x.catches)) : p.spot_count;
     return (p.result_matches ?? 0) >= minCatch;
   });
+
+  // Strategy leaderboard from results
+  const stratLeader = new Map<string, { plays: number; pnl: number }>();
+  for (const p of withResults) {
+    const key = p.strategy;
+    const e = stratLeader.get(key) ?? { plays: 0, pnl: 0 };
+    e.plays++;
+    e.pnl += p.result_pnl ?? 0;
+    stratLeader.set(key, e);
+  }
+  const stratRanked = [...stratLeader.entries()]
+    .map(([strat, s]) => ({ strat, ...s, ppg: s.plays > 0 ? s.pnl / s.plays : 0 }))
+    .sort((a, b) => b.ppg - a.ppg);
 
   if (loading) return <div className="text-slate-500 pt-8">Loading…</div>;
 
@@ -98,21 +170,42 @@ export default function SavedPicksPage() {
 
       {/* Performance summary */}
       {totalPlayed > 0 && (
-        <div className="bg-surface rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-slate-400 mb-3">Performance Summary</h2>
+        <div className="bg-surface rounded-xl p-5 space-y-4">
+          <h2 className="text-sm font-semibold text-slate-400">Performance Summary</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
               { label: 'Games Played', value: totalPlayed },
               { label: 'Avg Matches', value: avgMatches.toFixed(2) },
               { label: 'Best Result', value: `${bestResult} matches` },
-              { label: 'Win Rate', value: `${((wins.length / totalPlayed) * 100).toFixed(1)}%` },
-            ].map(({ label, value }) => (
+              { label: 'Win Rate', value: `${totalPlayed > 0 ? ((wins.length / totalPlayed) * 100).toFixed(1) : 0}%` },
+              { label: 'Total P&L', value: `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`, color: totalPnl >= 0 ? 'text-green-400' : 'text-red-400' },
+              { label: 'P&L / Game', value: `${totalPlayed > 0 ? (totalPnl / totalPlayed >= 0 ? '+' : '') + '$' + (totalPnl / totalPlayed).toFixed(2) : '—'}`, color: totalPnl >= 0 ? 'text-green-400' : 'text-red-400' },
+            ].map(({ label, value, color }) => (
               <div key={label}>
                 <div className="text-xs text-slate-500">{label}</div>
-                <div className="text-lg font-bold">{value}</div>
+                <div className={`text-lg font-bold ${color ?? ''}`}>{value}</div>
               </div>
             ))}
           </div>
+
+          {stratRanked.length > 0 && (
+            <div>
+              <div className="text-xs text-slate-500 mb-2">Strategy Leaderboard</div>
+              <div className="flex flex-wrap gap-2">
+                {stratRanked.map(({ strat, plays, ppg }) => (
+                  <div key={strat} className="bg-[#0e0e10] rounded px-3 py-1.5 text-xs">
+                    <span className="text-slate-300">{STRATEGY_LABELS[strat] ?? strat}</span>
+                    <span className="text-slate-600 mx-1">·</span>
+                    <span className="text-slate-500">{plays} plays</span>
+                    <span className="text-slate-600 mx-1">·</span>
+                    <span className={ppg >= 0 ? 'text-green-400' : 'text-red-400'}>
+                      {ppg >= 0 ? '+' : ''}${ppg.toFixed(2)}/g
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -156,11 +249,14 @@ export default function SavedPicksPage() {
                   {pick.spot_count} spots · {STRATEGY_LABELS[pick.strategy] ?? pick.strategy} ·{' '}
                   {BONUS_LABELS[pick.bonus_type] ?? pick.bonus_type}
                   {pick.wager && ` · $${pick.wager} ${pick.wager_type}`}
+                  {pick.strategy_id && (
+                    <span className="text-crimson"> · Strategy #{pick.strategy_id}</span>
+                  )}
                 </p>
               </div>
               <div className="flex gap-2 shrink-0">
                 <button
-                  onClick={() => setResultModal({ open: true, pickId: pick.id, gameNum: pick.result_game_num?.toString() ?? '', matches: pick.result_matches?.toString() ?? '' })}
+                  onClick={() => openResultModal(pick)}
                   className="text-xs px-2.5 py-1 rounded bg-[#2a2a2e] hover:bg-[#333] text-slate-300"
                 >
                   Log Result
@@ -177,7 +273,6 @@ export default function SavedPicksPage() {
               </div>
             </div>
 
-            {/* Mini number balls */}
             <div className="flex flex-wrap gap-1.5">
               {[...pick.numbers].sort((a, b) => a - b).map(n => (
                 <span
@@ -194,9 +289,16 @@ export default function SavedPicksPage() {
             )}
 
             {pick.result_matches !== null && (
-              <div className="text-xs text-green-400">
-                Result: {pick.result_matches} matches
-                {pick.result_game_num && ` on game #${pick.result_game_num}`}
+              <div className="flex items-center gap-3 text-xs">
+                <span className="text-slate-400">
+                  {pick.result_matches} matches
+                  {pick.result_game_num && ` on game #${pick.result_game_num}`}
+                </span>
+                {pick.result_pnl != null && (
+                  <span className={`font-semibold ${pick.result_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {pick.result_pnl >= 0 ? '+' : ''}${pick.result_pnl.toFixed(2)} P&L
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -223,11 +325,31 @@ export default function SavedPicksPage() {
               <input
                 type="number"
                 min={0}
+                max={resultModal.spotCount}
                 value={resultModal.matches}
-                onChange={e => setResultModal(m => ({ ...m, matches: e.target.value }))}
+                onChange={e => onMatchesChange(e.target.value)}
                 className="w-full bg-[#0e0e10] border border-[#333] rounded px-3 py-2 text-sm focus:outline-none focus:border-crimson"
               />
             </div>
+            {resultModal.matches !== '' && (
+              <div className="bg-[#0e0e10] rounded p-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Prize</span>
+                  <span className="font-bold">${resultModal.prize}</span>
+                </div>
+                <div className="flex justify-between mt-1">
+                  <span className="text-slate-500">P&L (vs $1 wager)</span>
+                  <span className={`font-bold ${(resultModal.prize - 1) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {(resultModal.prize - 1) >= 0 ? '+' : ''}${(resultModal.prize - 1).toFixed(2)}
+                  </span>
+                </div>
+                {resultModal.strategyId && (
+                  <div className="text-xs text-slate-600 mt-2">
+                    Will update Strategy #{resultModal.strategyId} real-world stats.
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setResultModal(m => ({ ...m, open: false }))}

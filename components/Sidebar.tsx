@@ -6,14 +6,16 @@ import { useState } from 'react';
 import { SyncStatus } from './SyncStatus';
 
 const NAV = [
+  { href: '/monitor', label: 'Live Monitor', icon: '⬤' },
   { href: '/dashboard', label: 'Dashboard', icon: '◉' },
-  { href: '/prediction-portal', label: 'Prediction Portal', icon: '★' },
-  { href: '/learning-center', label: 'Learning Center', icon: '▶' },
+  { href: '/strategy-lab', label: 'Strategy Lab', icon: '⚙' },
+  { href: '/spot-advisor', label: 'Spot Advisor', icon: '◈' },
   { href: '/my-picks', label: 'My Picks', icon: '✦' },
   { href: '/saved-picks', label: 'Saved Picks', icon: '⊡' },
+  { href: '/heatmap', label: 'Heatmap', icon: '▦' },
   { href: '/frequency', label: 'Frequency', icon: '≡' },
   { href: '/bonus-patterns', label: 'Bonus Patterns', icon: '✕' },
-  { href: '/pair-patterns', label: 'Pair Patterns', icon: '⊕' },
+  { href: '/time-patterns', label: 'Time Patterns', icon: '◷' },
   { href: '/draw-history', label: 'Draw History', icon: '⊞' },
   { href: '/data-ingestion', label: 'Data Ingestion', icon: '⬆' },
 ];
