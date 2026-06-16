@@ -67,9 +67,9 @@ export default function SplashPage() {
           <Image
             src="/Logo-Keno.png"
             alt="KE-KNOW"
-            width={340}
-            height={170}
-            style={{ height: '160px', width: 'auto', objectFit: 'contain' }}
+            width={500}
+            height={250}
+            style={{ height: '220px', width: 'auto', objectFit: 'contain' }}
             priority
           />
         </div>

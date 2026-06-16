@@ -38,6 +38,60 @@ function Dot({ ok }: { ok: boolean }) {
   );
 }
 
+function computeArthurThought(
+  evoState: EvolutionState | null,
+  champions: { spot_count: number; fitness_score: number | null; id: number; generation: number }[],
+  bToday: PerformanceBucket,
+  bAll: PerformanceBucket,
+  b24: PerformanceBucket,
+  events: SystemEvent[]
+): string {
+  if (!evoState || evoState.current_generation === 0) {
+    return "Still waking up. Run an evolution cycle and I'll start building my strategy.";
+  }
+
+  const gen = evoState.current_generation;
+  const champCount = champions.length;
+
+  const lastEvoEvt = events.find(e => e.event_type === 'evolution_complete');
+  const evoRecent = lastEvoEvt
+    && (Date.now() - new Date(lastEvoEvt.occurred_at).getTime()) < 30 * 60 * 1000;
+
+  if (evoRecent && champCount > 0) {
+    const best = champions.reduce((a, c) =>
+      (c.fitness_score ?? -999) > (a.fitness_score ?? -999) ? c : a, champions[0]);
+    return `Generation ${gen} just wrapped. My best ${best.spot_count}-spot champion (#${best.id}) leads with fitness ${(best.fitness_score ?? 0).toFixed(3)}. Predictions are live.`;
+  }
+
+  if (bToday.total >= 10) {
+    const todayWR = (bToday.wins / bToday.total * 100).toFixed(1);
+    const allWR = bAll.total > 0 ? (bAll.wins / bAll.total * 100) : 0;
+    if (bToday.pnl > 0) {
+      return `Running hot today — ${todayWR}% win rate across ${bToday.total} shadow plays, averaging ${(bToday.pnl / bToday.total).toFixed(3)}/game. Gen ${gen} strategies holding up.`;
+    }
+    if (allWR > 0 && (bToday.wins / bToday.total * 100) > allWR * 1.05) {
+      return `Performing above my ${allWR.toFixed(1)}% lifetime baseline today — ${todayWR}% win rate across ${bToday.total} plays. Gen ${gen} is looking sharp.`;
+    }
+    if (bToday.pnl < -5) {
+      return `Tough session today. Down $${Math.abs(bToday.pnl).toFixed(2)} across ${bToday.total} plays. I'll adapt — the next evolution cycle will refine my approach.`;
+    }
+    return `Steady day — ${todayWR}% win rate, ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} net across ${bToday.total} shadow plays. Gen ${gen} holding baseline.`;
+  }
+
+  if (b24.total > 0) {
+    const wr24 = (b24.wins / b24.total * 100).toFixed(1);
+    return `Last 24 hours: ${wr24}% win rate, ${b24.pnl >= 0 ? '+' : ''}$${b24.pnl.toFixed(2)} P&L across ${b24.total} shadow plays. Generation ${gen} active.`;
+  }
+
+  if (champCount > 0) {
+    const best = champions.reduce((a, c) =>
+      (c.fitness_score ?? -999) > (a.fitness_score ?? -999) ? c : a, champions[0]);
+    return `Generation ${gen} with ${champCount} active champion${champCount !== 1 ? 's' : ''}. My best ${best.spot_count}-spot strategy (#${best.id}) carries fitness ${(best.fitness_score ?? 0).toFixed(3)}.`;
+  }
+
+  return `Generation ${gen} underway. Waiting for scored predictions to build my performance baseline.`;
+}
+
 function StatCard({
   label, value, sub, ok,
 }: { label: string; value: string; sub?: string; ok?: boolean }) {
@@ -299,9 +353,35 @@ export default function MonitorPage() {
 
   if (!mounted) return null;
 
+  const arthurThought = computeArthurThought(evoState, champions, bToday, bAll, b24, events);
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Live Monitor</h1>
+
+      {/* ── Arthur's Current Thought ── */}
+      <div className="relative rounded-xl border border-[#2a2a2e] bg-surface overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none"
+          style={{ background: 'radial-gradient(ellipse 80% 100% at 0% 50%, rgba(139,26,74,0.06) 0%, transparent 60%)' }} />
+        <div className="relative flex items-start gap-4 px-5 py-4">
+          <div className="shrink-0 mt-0.5 flex items-center justify-center w-8 h-8 rounded-full bg-crimson/10 border border-crimson/20">
+            <span className="text-crimson text-xs font-bold tracking-tight">A</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-[10px] font-semibold text-crimson/70 uppercase tracking-widest">Arthur</span>
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-40" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500/70" />
+              </span>
+              {evoState?.current_generation ? (
+                <span className="text-[10px] text-slate-600">Gen {evoState.current_generation}</span>
+              ) : null}
+            </div>
+            <p className="text-sm text-slate-300 leading-relaxed">{arthurThought}</p>
+          </div>
+        </div>
+      </div>
 
       {/* ── TOP: Evolution + Database ── */}
       <div className="grid grid-cols-2 gap-3">
