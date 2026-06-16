@@ -220,7 +220,7 @@ export default function SplashPage() {
         {/* Logo */}
         <div className={fade(1)}>
           <Image
-            src="/Logo-Keno.png"
+            src="/Logo-Splash.png"
             alt="KE-KNOW"
             width={640}
             height={320}
