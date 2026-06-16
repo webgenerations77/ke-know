@@ -8,41 +8,121 @@ import { supabase } from '@/lib/supabase';
 type ArthurMood = 'awakening' | 'curious' | 'focused' | 'optimistic' | 'cautious' | 'frustrated';
 
 const MOOD_META: Record<ArthurMood, {
-  label: string; color: string; dot: string; desc: string; emoji: string; long: string;
+  label: string; color: string; stroke: string; bg: string; desc: string; long: string;
 }> = {
-  awakening:  {
-    label: 'Awakening',  color: 'text-slate-400',  dot: 'bg-slate-500',  emoji: '🌱',
+  awakening: {
+    label: 'Awakening',  color: 'text-slate-400',  stroke: '#64748b', bg: 'rgba(100,116,139,0.10)',
     desc: 'Waiting to evolve',
     long: 'Arthur has no evolution cycles yet. Feed him historical data and run the first evolution to bring him online.',
   },
-  curious:    {
-    label: 'Curious',    color: 'text-blue-400',   dot: 'bg-blue-400',   emoji: '🔍',
+  curious: {
+    label: 'Curious',    color: 'text-blue-400',   stroke: '#60a5fa', bg: 'rgba(96,165,250,0.10)',
     desc: 'Exploring patterns',
-    long: 'Arthur is active but hasn\'t accumulated enough today\'s shadow plays to form a clear view. He\'s watching and learning.',
+    long: "Arthur is active but hasn't accumulated enough today's shadow plays to form a clear view. He's watching and learning.",
   },
-  focused:    {
-    label: 'Focused',    color: 'text-slate-200',  dot: 'bg-slate-400',  emoji: '🎯',
+  focused: {
+    label: 'Focused',    color: 'text-slate-200',  stroke: '#94a3b8', bg: 'rgba(148,163,184,0.08)',
     desc: 'Analyzing data',
-    long: 'Arthur is on baseline — steady win rate, roughly break-even P&L. He\'s locked in on the data without strong signals in either direction.',
+    long: "Arthur is on baseline — steady win rate, roughly break-even P&L. He's locked in on the data without strong signals in either direction.",
   },
   optimistic: {
-    label: 'Optimistic', color: 'text-green-400',  dot: 'bg-green-400',  emoji: '🚀',
+    label: 'Optimistic', color: 'text-green-400',  stroke: '#4ade80', bg: 'rgba(74,222,128,0.10)',
     desc: 'Performing well',
-    long: 'Today\'s session is profitable with a win rate above 35%. Arthur\'s current generation strategies are firing on all cylinders.',
+    long: "Today's session is profitable with a win rate above 35%. Arthur's current generation strategies are firing on all cylinders.",
   },
-  cautious:   {
-    label: 'Cautious',   color: 'text-amber-400',  dot: 'bg-amber-400',  emoji: '⚠️',
+  cautious: {
+    label: 'Cautious',   color: 'text-amber-400',  stroke: '#fbbf24', bg: 'rgba(251,191,36,0.10)',
     desc: 'Watching trends',
-    long: 'Today\'s P&L is slightly negative. Arthur is monitoring the session closely and expecting the next evolution cycle to recalibrate.',
+    long: "Today's P&L is slightly negative. Arthur is monitoring the session closely and expecting the next evolution cycle to recalibrate.",
   },
   frustrated: {
-    label: 'Frustrated', color: 'text-red-400',    dot: 'bg-red-500',    emoji: '🔥',
+    label: 'Frustrated', color: 'text-red-400',    stroke: '#f87171', bg: 'rgba(248,113,113,0.10)',
     desc: 'Adapting strategy',
-    long: 'Significant losses or a very low win rate today. Arthur knows these runs happen — he\'ll use this data to drive harder selection pressure in the next generation.',
+    long: "Significant losses or a very low win rate today. Arthur knows these runs happen — he'll use this data to drive harder selection pressure in the next generation.",
   },
 };
 
 const MOODS_ORDER: ArthurMood[] = ['awakening', 'curious', 'focused', 'optimistic', 'cautious', 'frustrated'];
+
+// SVG face avatars — each mood has a distinct expression drawn in a 32×32 viewBox.
+function MoodFace({ mood, size = 40 }: { mood: ArthurMood; size?: number }) {
+  const { stroke, bg } = MOOD_META[mood];
+
+  const expression: Record<ArthurMood, React.ReactNode> = {
+    // Sleeping — closed eyes, gentle smile, zz
+    awakening: (
+      <>
+        <line x1="9" y1="13" x2="13" y2="13" stroke={stroke} strokeWidth="1.8" strokeLinecap="round"/>
+        <line x1="19" y1="13" x2="23" y2="13" stroke={stroke} strokeWidth="1.8" strokeLinecap="round"/>
+        <path d="M12,20 Q16,22 20,20" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+        <text x="20.5" y="10" fontSize="5.5" fill={stroke} fontWeight="700" opacity="0.85">z</text>
+        <text x="24" y="7.5" fontSize="3.8" fill={stroke} fontWeight="700" opacity="0.5">z</text>
+      </>
+    ),
+    // One raised brow, inquisitive eyes, lopsided smile
+    curious: (
+      <>
+        <path d="M9,11 Q11,8 13,9" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" fill="none"/>
+        <path d="M19,10 Q21,9 23,10" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" fill="none"/>
+        <circle cx="11" cy="14" r="2.1" fill={stroke}/>
+        <circle cx="21" cy="14" r="1.8" fill={stroke}/>
+        <path d="M12,21 Q16,23 20,20" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+      </>
+    ),
+    // Furrowed brows, squinting eyes, flat mouth — intense focus
+    focused: (
+      <>
+        <path d="M9,10 Q11,11 13,10" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" fill="none"/>
+        <path d="M19,10 Q21,11 23,10" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" fill="none"/>
+        <line x1="9" y1="14" x2="14" y2="14" stroke={stroke} strokeWidth="2.2" strokeLinecap="round"/>
+        <line x1="18" y1="14" x2="23" y2="14" stroke={stroke} strokeWidth="2.2" strokeLinecap="round"/>
+        <line x1="12" y1="20" x2="20" y2="20" stroke={stroke} strokeWidth="1.8" strokeLinecap="round"/>
+      </>
+    ),
+    // Raised happy brows, wide bright eyes, big smile
+    optimistic: (
+      <>
+        <path d="M9,10 Q11,7.5 13,9" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+        <path d="M19,9 Q21,7.5 23,10" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+        <circle cx="11" cy="14" r="2.3" fill={stroke}/>
+        <circle cx="21" cy="14" r="2.3" fill={stroke}/>
+        <path d="M10,19 Q16,26 22,19" stroke={stroke} strokeWidth="2.2" strokeLinecap="round" fill="none"/>
+      </>
+    ),
+    // Worried inner brows (inner corners rise), normal eyes, slight downward mouth
+    cautious: (
+      <>
+        <path d="M9,11.5 Q11,9 13,10" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" fill="none"/>
+        <path d="M19,10 Q21,9 23,11.5" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" fill="none"/>
+        <circle cx="11" cy="15" r="1.8" fill={stroke}/>
+        <circle cx="21" cy="15" r="1.8" fill={stroke}/>
+        <path d="M12,21 Q16,19 20,21" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" fill="none"/>
+      </>
+    ),
+    // Inner brow corners pull DOWN (angry tilt), eyes, clear frown
+    frustrated: (
+      <>
+        <path d="M9,9 Q11,10.5 13,12" stroke={stroke} strokeWidth="2.1" strokeLinecap="round" fill="none"/>
+        <path d="M19,12 Q21,10.5 23,9" stroke={stroke} strokeWidth="2.1" strokeLinecap="round" fill="none"/>
+        <circle cx="11" cy="15" r="1.8" fill={stroke}/>
+        <circle cx="21" cy="15" r="1.8" fill={stroke}/>
+        <path d="M11,22 Q16,18 21,22" stroke={stroke} strokeWidth="2.1" strokeLinecap="round" fill="none"/>
+      </>
+    ),
+  };
+
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%',
+      background: bg, border: `1.5px solid ${stroke}45`,
+      flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <svg width={size} height={size} viewBox="0 0 32 32">
+        {expression[mood]}
+      </svg>
+    </div>
+  );
+}
 
 interface ArthurStatus {
   generation: number | null;
@@ -90,32 +170,28 @@ export default function SplashPage() {
   useEffect(() => {
     const t1 = setTimeout(() => setPhase(1), 120);
     const t2 = setTimeout(() => setPhase(2), 520);
-    const t3 = setTimeout(() => setPhase(3), 860);
-    const t4 = setTimeout(() => setPhase(4), 1100);
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4); };
+    const t3 = setTimeout(() => setPhase(3), 820);   // Enter button
+    const t4 = setTimeout(() => setPhase(4), 1100);  // Meet Arthur
+    const t5 = setTimeout(() => setPhase(5), 1350);  // Footer
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4); clearTimeout(t5); };
   }, []);
 
   useEffect(() => {
     async function load() {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
-
       const [{ data: evo }, { count: gamesCount }, { data: todayResults }] = await Promise.all([
         supabase.from('evolution_state').select('current_generation,last_run_at').eq('id', 1).single(),
         supabase.from('games').select('game_num', { count: 'exact', head: true }),
         supabase.from('live_results').select('prize,pnl').gte('scored_at', todayStart.toISOString()),
       ]);
-
       const todayTotal = todayResults?.length ?? 0;
       const todayWins = todayResults?.filter(r => (r.prize ?? 0) > 0).length ?? 0;
       const todayPnl = todayResults?.reduce((sum, r) => sum + (r.pnl ?? 0), 0) ?? 0;
       const generation = evo?.current_generation ?? null;
       const lastRunAt = evo?.last_run_at ?? null;
-
       setArthur({
-        generation,
-        totalGames: gamesCount,
-        lastRunAt,
+        generation, totalGames: gamesCount, lastRunAt,
         mood: computeMood(generation, lastRunAt, todayTotal, todayWins, todayPnl),
       });
     }
@@ -134,15 +210,12 @@ export default function SplashPage() {
         background: 'radial-gradient(ellipse 70% 50% at 50% 48%, rgba(139,26,74,0.10) 0%, transparent 70%)',
       }} />
 
-      {/* Mood panel overlay — closes on outside click */}
+      {/* Backdrop to close mood panel */}
       {moodPanelOpen && (
-        <div
-          className="fixed inset-0 z-20"
-          onClick={() => setMoodPanelOpen(false)}
-        />
+        <div className="fixed inset-0 z-20" onClick={() => setMoodPanelOpen(false)} />
       )}
 
-      <div className="relative flex flex-col items-center gap-0 z-10">
+      <div className="relative flex flex-col items-center z-10">
 
         {/* Logo */}
         <div className={fade(1)}>
@@ -163,29 +236,42 @@ export default function SplashPage() {
           </p>
         </div>
 
+        {/* ── Enter button — between tagline and Arthur ── */}
+        <div className={`mt-10 ${fade(3)}`}>
+          <button
+            onClick={() => router.push('/monitor')}
+            className="group relative px-12 py-3.5 rounded-lg bg-crimson hover:bg-crimson-hover text-white text-sm tracking-widest font-medium transition-all duration-200 hover:shadow-[0_0_32px_rgba(139,26,74,0.45)]"
+          >
+            Enter
+            <span className="ml-3 opacity-50 group-hover:opacity-100 group-hover:ml-4 transition-all duration-200">→</span>
+          </button>
+        </div>
+
         {/* Divider */}
-        <div className={`mt-10 mb-10 w-px h-12 bg-gradient-to-b from-transparent via-[#2a2a2e] to-transparent ${fade(3)}`} />
+        <div className={`mt-10 mb-10 w-px h-10 bg-gradient-to-b from-transparent via-[#2a2a2e] to-transparent ${fade(4)}`} />
 
-        {/* Arthur block */}
-        <div className={`flex flex-col items-center gap-4 ${fade(3)}`}>
+        {/* ── Arthur block ── */}
+        <div className={`flex flex-col items-center gap-4 ${fade(4)}`}>
 
-          {/* Section label */}
-          <p className="text-[10px] tracking-[0.45em] text-slate-600 uppercase">
-            Meet Arthur
-          </p>
+          {/* "Meet Arthur" — prominent section heading */}
+          <div className="flex items-center gap-3">
+            <div className="h-px w-8 bg-gradient-to-r from-transparent to-[#3a3a40]" />
+            <p className="text-sm tracking-[0.5em] text-slate-300 uppercase font-semibold">
+              Meet Arthur
+            </p>
+            <div className="h-px w-8 bg-gradient-to-l from-transparent to-[#3a3a40]" />
+          </div>
 
-          {/* Status indicator */}
+          {/* Live status */}
           <div className="flex items-center gap-2.5">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-40" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500/70" />
             </span>
-            <span className="text-sm text-slate-300 tracking-wide">
-              Arthur is learning.
-            </span>
+            <span className="text-sm text-slate-300 tracking-wide">Arthur is learning.</span>
           </div>
 
-          {/* Live stats */}
+          {/* Stats row */}
           {(arthur.generation !== null || arthur.totalGames !== null) && (
             <div className="flex items-center gap-3 text-xs text-slate-500 tracking-wide">
               {arthur.generation !== null && (
@@ -206,25 +292,26 @@ export default function SplashPage() {
             </div>
           )}
 
-          {/* Mood row + clickable emoji */}
+          {/* Mood row — face avatar as the clickable trigger */}
           <div className="relative flex flex-col items-center gap-2">
-            <div className="flex items-center gap-2">
-              <span className={`inline-flex w-2 h-2 rounded-full flex-shrink-0 ${mood.dot}`} />
+            <div className="flex items-center gap-3">
+              <span className={`inline-flex w-2 h-2 rounded-full flex-shrink-0`}
+                style={{ background: mood.stroke }} />
               <span className={`text-sm font-medium tracking-wide ${mood.color}`}>{mood.label}</span>
               <span className="text-xs text-slate-600">· {mood.desc}</span>
               <button
-                onClick={(e) => { e.stopPropagation(); setMoodPanelOpen(o => !o); }}
-                className="text-lg leading-none hover:scale-110 transition-transform cursor-pointer ml-1"
+                onClick={e => { e.stopPropagation(); setMoodPanelOpen(o => !o); }}
+                className="hover:scale-110 transition-transform cursor-pointer"
                 title="What does Arthur's mood mean?"
               >
-                {mood.emoji}
+                <MoodFace mood={arthur.mood} size={34} />
               </button>
             </div>
 
             {/* Mood explanation panel */}
             {moodPanelOpen && (
               <div
-                className="absolute top-full mt-3 z-30 w-80 bg-[#111114] border border-[#2a2a2e] rounded-xl shadow-2xl overflow-hidden"
+                className="absolute top-full mt-3 z-30 w-[22rem] bg-[#111114] border border-[#2a2a2e] rounded-xl shadow-2xl overflow-hidden"
                 onClick={e => e.stopPropagation()}
               >
                 <div className="px-4 py-3 border-b border-[#2a2a2e]">
@@ -236,18 +323,20 @@ export default function SplashPage() {
                     const meta = MOOD_META[m];
                     const isActive = m === arthur.mood;
                     return (
-                      <div
-                        key={m}
-                        className={`px-4 py-3 ${isActive ? 'bg-[#1a1a1e]' : ''}`}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-base">{meta.emoji}</span>
-                          <span className={`text-xs font-semibold ${meta.color}`}>{meta.label}</span>
-                          {isActive && (
-                            <span className="ml-auto text-[9px] text-crimson/70 font-semibold uppercase tracking-widest">now</span>
-                          )}
+                      <div key={m} className={`flex gap-3 px-4 py-3 ${isActive ? 'bg-[#1a1a1e]' : ''}`}>
+                        <div className="pt-0.5 flex-shrink-0">
+                          <MoodFace mood={m} size={30} />
                         </div>
-                        <p className="text-[10px] text-slate-500 leading-relaxed pl-7">{meta.long}</p>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`text-xs font-semibold ${meta.color}`}>{meta.label}</span>
+                            <span className="text-[10px] text-slate-600">· {meta.desc}</span>
+                            {isActive && (
+                              <span className="ml-auto text-[9px] text-crimson/70 font-semibold uppercase tracking-widest">now</span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">{meta.long}</p>
+                        </div>
                       </div>
                     );
                   })}
@@ -257,22 +346,10 @@ export default function SplashPage() {
           </div>
 
         </div>
-
-        {/* Enter button */}
-        <div className={`mt-14 ${fade(4)}`}>
-          <button
-            onClick={() => router.push('/monitor')}
-            className="group relative px-12 py-3.5 rounded-lg bg-crimson hover:bg-crimson-hover text-white text-sm tracking-widest font-medium transition-all duration-200 hover:shadow-[0_0_32px_rgba(139,26,74,0.45)]"
-          >
-            Enter
-            <span className="ml-3 opacity-50 group-hover:opacity-100 group-hover:ml-4 transition-all duration-200">→</span>
-          </button>
-        </div>
-
       </div>
 
       {/* Powered By footer */}
-      <div className={`absolute bottom-6 flex flex-col items-center gap-2 ${fade(4)}`}>
+      <div className={`absolute bottom-6 flex flex-col items-center gap-2 ${fade(5)}`}>
         <p className="text-[9px] text-slate-700 tracking-[0.3em] uppercase">Powered By</p>
         <Image
           src="/Logo.png"
