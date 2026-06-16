@@ -236,14 +236,21 @@ export default function SplashPage() {
           </p>
         </div>
 
-        {/* ── Enter button — between tagline and Arthur ── */}
-        <div className={`mt-10 ${fade(3)}`}>
+        {/* ── Buttons — primary + secondary ── */}
+        <div className={`mt-10 flex items-center gap-3 ${fade(3)}`}>
           <button
             onClick={() => router.push('/monitor')}
-            className="group relative px-12 py-3.5 rounded-lg bg-crimson hover:bg-crimson-hover text-white text-sm tracking-widest font-medium transition-all duration-200 hover:shadow-[0_0_32px_rgba(139,26,74,0.45)]"
+            className="group relative px-10 py-3.5 rounded-lg bg-crimson hover:bg-crimson-hover text-white text-sm tracking-widest font-medium transition-all duration-200 hover:shadow-[0_0_32px_rgba(139,26,74,0.45)]"
           >
             Watch Arthur Live
             <span className="ml-3 opacity-50 group-hover:opacity-100 group-hover:ml-4 transition-all duration-200">→</span>
+          </button>
+          <button
+            onClick={() => router.push('/daily-pick')}
+            className="group px-8 py-3.5 rounded-lg border border-crimson/40 hover:border-crimson/80 hover:bg-crimson/10 text-crimson text-sm tracking-widest font-medium transition-all duration-200"
+          >
+            Today's Play
+            <span className="ml-2 opacity-50 group-hover:opacity-100 transition-all duration-200">→</span>
           </button>
         </div>
 

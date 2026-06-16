@@ -7,6 +7,7 @@ import { SyncStatus } from './SyncStatus';
 
 const NAV = [
   { href: '/monitor', label: 'Live Monitor', icon: '⬤' },
+  { href: '/daily-pick', label: 'Daily Pick', icon: '★' },
   { href: '/spot-advisor', label: 'Spot Advisor', icon: '◈' },
   { href: '/strategy-lab', label: 'Strategy Lab', icon: '⚙' },
   { href: '/dashboard', label: 'Dashboard', icon: '◉' },
