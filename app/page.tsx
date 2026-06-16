@@ -7,23 +7,48 @@ import { supabase } from '@/lib/supabase';
 
 type ArthurMood = 'awakening' | 'curious' | 'focused' | 'optimistic' | 'cautious' | 'frustrated';
 
-const MOOD_META: Record<ArthurMood, { label: string; color: string; dot: string; desc: string }> = {
-  awakening:  { label: 'Awakening',  color: 'text-slate-400',  dot: 'bg-slate-500',  desc: 'Waiting to evolve' },
-  curious:    { label: 'Curious',    color: 'text-blue-400',   dot: 'bg-blue-400',   desc: 'Exploring patterns' },
-  focused:    { label: 'Focused',    color: 'text-slate-200',  dot: 'bg-slate-400',  desc: 'Analyzing data' },
-  optimistic: { label: 'Optimistic', color: 'text-green-400',  dot: 'bg-green-400',  desc: 'Performing well' },
-  cautious:   { label: 'Cautious',   color: 'text-amber-400',  dot: 'bg-amber-400',  desc: 'Watching trends' },
-  frustrated: { label: 'Frustrated', color: 'text-red-400',    dot: 'bg-red-500',    desc: 'Adapting strategy' },
+const MOOD_META: Record<ArthurMood, {
+  label: string; color: string; dot: string; desc: string; emoji: string; long: string;
+}> = {
+  awakening:  {
+    label: 'Awakening',  color: 'text-slate-400',  dot: 'bg-slate-500',  emoji: '🌱',
+    desc: 'Waiting to evolve',
+    long: 'Arthur has no evolution cycles yet. Feed him historical data and run the first evolution to bring him online.',
+  },
+  curious:    {
+    label: 'Curious',    color: 'text-blue-400',   dot: 'bg-blue-400',   emoji: '🔍',
+    desc: 'Exploring patterns',
+    long: 'Arthur is active but hasn\'t accumulated enough today\'s shadow plays to form a clear view. He\'s watching and learning.',
+  },
+  focused:    {
+    label: 'Focused',    color: 'text-slate-200',  dot: 'bg-slate-400',  emoji: '🎯',
+    desc: 'Analyzing data',
+    long: 'Arthur is on baseline — steady win rate, roughly break-even P&L. He\'s locked in on the data without strong signals in either direction.',
+  },
+  optimistic: {
+    label: 'Optimistic', color: 'text-green-400',  dot: 'bg-green-400',  emoji: '🚀',
+    desc: 'Performing well',
+    long: 'Today\'s session is profitable with a win rate above 35%. Arthur\'s current generation strategies are firing on all cylinders.',
+  },
+  cautious:   {
+    label: 'Cautious',   color: 'text-amber-400',  dot: 'bg-amber-400',  emoji: '⚠️',
+    desc: 'Watching trends',
+    long: 'Today\'s P&L is slightly negative. Arthur is monitoring the session closely and expecting the next evolution cycle to recalibrate.',
+  },
+  frustrated: {
+    label: 'Frustrated', color: 'text-red-400',    dot: 'bg-red-500',    emoji: '🔥',
+    desc: 'Adapting strategy',
+    long: 'Significant losses or a very low win rate today. Arthur knows these runs happen — he\'ll use this data to drive harder selection pressure in the next generation.',
+  },
 };
+
+const MOODS_ORDER: ArthurMood[] = ['awakening', 'curious', 'focused', 'optimistic', 'cautious', 'frustrated'];
 
 interface ArthurStatus {
   generation: number | null;
   totalGames: number | null;
   lastRunAt: string | null;
   mood: ArthurMood;
-  todayTotal: number;
-  todayWins: number;
-  todayPnl: number;
 }
 
 function timeAgo(iso: string | null): string {
@@ -58,9 +83,9 @@ export default function SplashPage() {
   const router = useRouter();
   const [phase, setPhase] = useState(0);
   const [arthur, setArthur] = useState<ArthurStatus>({
-    generation: null, totalGames: null, lastRunAt: null,
-    mood: 'awakening', todayTotal: 0, todayWins: 0, todayPnl: 0,
+    generation: null, totalGames: null, lastRunAt: null, mood: 'awakening',
   });
+  const [moodPanelOpen, setMoodPanelOpen] = useState(false);
 
   useEffect(() => {
     const t1 = setTimeout(() => setPhase(1), 120);
@@ -92,9 +117,6 @@ export default function SplashPage() {
         totalGames: gamesCount,
         lastRunAt,
         mood: computeMood(generation, lastRunAt, todayTotal, todayWins, todayPnl),
-        todayTotal,
-        todayWins,
-        todayPnl,
       });
     }
     load();
@@ -111,6 +133,14 @@ export default function SplashPage() {
       <div className="pointer-events-none absolute inset-0" style={{
         background: 'radial-gradient(ellipse 70% 50% at 50% 48%, rgba(139,26,74,0.10) 0%, transparent 70%)',
       }} />
+
+      {/* Mood panel overlay — closes on outside click */}
+      {moodPanelOpen && (
+        <div
+          className="fixed inset-0 z-20"
+          onClick={() => setMoodPanelOpen(false)}
+        />
+      )}
 
       <div className="relative flex flex-col items-center gap-0 z-10">
 
@@ -176,11 +206,54 @@ export default function SplashPage() {
             </div>
           )}
 
-          {/* Mood */}
-          <div className="flex items-center gap-2">
-            <span className={`inline-flex w-2 h-2 rounded-full flex-shrink-0 ${mood.dot}`} />
-            <span className={`text-sm font-medium tracking-wide ${mood.color}`}>{mood.label}</span>
-            <span className="text-xs text-slate-600">· {mood.desc}</span>
+          {/* Mood row + clickable emoji */}
+          <div className="relative flex flex-col items-center gap-2">
+            <div className="flex items-center gap-2">
+              <span className={`inline-flex w-2 h-2 rounded-full flex-shrink-0 ${mood.dot}`} />
+              <span className={`text-sm font-medium tracking-wide ${mood.color}`}>{mood.label}</span>
+              <span className="text-xs text-slate-600">· {mood.desc}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); setMoodPanelOpen(o => !o); }}
+                className="text-lg leading-none hover:scale-110 transition-transform cursor-pointer ml-1"
+                title="What does Arthur's mood mean?"
+              >
+                {mood.emoji}
+              </button>
+            </div>
+
+            {/* Mood explanation panel */}
+            {moodPanelOpen && (
+              <div
+                className="absolute top-full mt-3 z-30 w-80 bg-[#111114] border border-[#2a2a2e] rounded-xl shadow-2xl overflow-hidden"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="px-4 py-3 border-b border-[#2a2a2e]">
+                  <p className="text-xs font-semibold text-slate-300 tracking-wide">Arthur's Emotional States</p>
+                  <p className="text-[10px] text-slate-600 mt-0.5">His mood reflects today's live performance</p>
+                </div>
+                <div className="divide-y divide-[#1e1e24]">
+                  {MOODS_ORDER.map(m => {
+                    const meta = MOOD_META[m];
+                    const isActive = m === arthur.mood;
+                    return (
+                      <div
+                        key={m}
+                        className={`px-4 py-3 ${isActive ? 'bg-[#1a1a1e]' : ''}`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-base">{meta.emoji}</span>
+                          <span className={`text-xs font-semibold ${meta.color}`}>{meta.label}</span>
+                          {isActive && (
+                            <span className="ml-auto text-[9px] text-crimson/70 font-semibold uppercase tracking-widest">now</span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-500 leading-relaxed pl-7">{meta.long}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
         </div>
@@ -198,11 +271,16 @@ export default function SplashPage() {
 
       </div>
 
-      {/* Bottom note */}
-      <div className={`absolute bottom-8 ${fade(4)}`}>
-        <p className="text-[10px] text-slate-700 tracking-widest uppercase">
-          ke-know · 2026
-        </p>
+      {/* Powered By footer */}
+      <div className={`absolute bottom-6 flex flex-col items-center gap-2 ${fade(4)}`}>
+        <p className="text-[9px] text-slate-700 tracking-[0.3em] uppercase">Powered By</p>
+        <Image
+          src="/Logo.png"
+          alt="Powered By"
+          width={100}
+          height={32}
+          style={{ height: '28px', width: 'auto', objectFit: 'contain', opacity: 0.35 }}
+        />
       </div>
     </div>
   );
