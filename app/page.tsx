@@ -215,7 +215,7 @@ export default function SplashPage() {
         <div className="fixed inset-0 z-20" onClick={() => setMoodPanelOpen(false)} />
       )}
 
-      <div className="relative flex flex-col items-center z-10">
+      <div className="relative flex flex-col items-center z-10 -mt-16">
 
         {/* Logo */}
         <div className={fade(1)}>
