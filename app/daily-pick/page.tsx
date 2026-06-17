@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useToast } from '@/components/Toast';
+import { supabase } from '@/lib/supabase';
 
 interface DailyPick {
   id: number;
@@ -25,6 +25,17 @@ interface DailyPick {
     max_losing_streak?: number;
     champion_id?: number;
   } | null;
+}
+
+interface PickPerformance {
+  pick_date: string;
+  spot_count: number;
+  picks: number[];
+  bonus_type: string;
+  games_scored: number;
+  wins: number;
+  total_pnl: number;
+  best_win: number;
 }
 
 function fmtHour(h: number): string {
@@ -60,12 +71,13 @@ function windowStatus(bestHour: number | null, now: Date) {
 }
 
 export default function DailyPickPage() {
-  const router = useRouter();
   const { toast } = useToast();
   const [pick, setPick] = useState<DailyPick | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const [history, setHistory] = useState<PickPerformance[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -85,7 +97,49 @@ export default function DailyPickPage() {
     }
   }
 
-  useEffect(() => { loadPick(); }, []);
+  async function loadHistory() {
+    const { data: pastPicks } = await supabase
+      .from('daily_picks')
+      .select('pick_date, spot_count, picks, bonus_type, strategy_id')
+      .order('pick_date', { ascending: false })
+      .limit(30);
+
+    if (!pastPicks || pastPicks.length === 0) return;
+
+    const strategyIds = [...new Set(pastPicks.map(p => p.strategy_id).filter(Boolean))];
+    const { data: liveData } = await supabase
+      .from('live_results')
+      .select('strategy_id, scored_at, picks, matches, prize, pnl, spot_count')
+      .in('strategy_id', strategyIds as number[])
+      .order('scored_at', { ascending: false })
+      .limit(10000);
+
+    const perf: PickPerformance[] = pastPicks.map(dp => {
+      const dayStart = new Date(dp.pick_date + 'T00:00:00');
+      const dayEnd = new Date(dp.pick_date + 'T23:59:59');
+      const dayResults = (liveData ?? []).filter(r =>
+        r.strategy_id === dp.strategy_id &&
+        r.spot_count === dp.spot_count &&
+        new Date(r.scored_at) >= dayStart &&
+        new Date(r.scored_at) <= dayEnd
+      );
+
+      return {
+        pick_date: dp.pick_date,
+        spot_count: dp.spot_count,
+        picks: dp.picks as number[],
+        bonus_type: dp.bonus_type as string,
+        games_scored: dayResults.length,
+        wins: dayResults.filter(r => (r.prize as number) > 0).length,
+        total_pnl: dayResults.reduce((s, r) => s + (r.pnl as number), 0),
+        best_win: dayResults.length > 0 ? Math.max(...dayResults.map(r => r.prize as number)) : 0,
+      };
+    });
+
+    setHistory(perf);
+  }
+
+  useEffect(() => { loadPick(); loadHistory(); }, []);
 
   async function handleGenerate() {
     setGenerating(true);
@@ -273,7 +327,7 @@ export default function DailyPickPage() {
 
       {/* Expected outcome */}
       <div className="bg-surface rounded-xl p-5 space-y-4">
-        <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">Expected Outcome</p>
+        <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">Backtested Average</p>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <p className="text-xs text-slate-600 mb-1">Per Game (avg)</p>
@@ -289,28 +343,106 @@ export default function DailyPickPage() {
           </div>
         </div>
         {pick.reasoning && (
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-600 pt-1 border-t border-[#1e1e24]">
-            {pick.reasoning.shadow_plays !== undefined && (
-              <span>{pick.reasoning.shadow_plays} shadow plays</span>
-            )}
-            {pick.reasoning.win_rate !== undefined && (
-              <span>{((pick.reasoning.win_rate) * 100).toFixed(0)}% historical win rate</span>
-            )}
-            {pick.reasoning.max_losing_streak !== undefined && (
-              <span>Max losing streak: {pick.reasoning.max_losing_streak}</span>
-            )}
+          <div className="space-y-2 pt-2 border-t border-[#1e1e24]">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-600">
+              {pick.reasoning.shadow_plays !== undefined && (
+                <span>{pick.reasoning.shadow_plays} shadow plays</span>
+              )}
+              {pick.reasoning.win_rate !== undefined && (
+                <span>{((pick.reasoning.win_rate) * 100).toFixed(0)}% historical win rate</span>
+              )}
+              {pick.reasoning.max_losing_streak !== undefined && (
+                <span>Max losing streak: {pick.reasoning.max_losing_streak}</span>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-700 leading-relaxed">
+              This average includes rare big wins that pull the number up. Most individual games
+              won't hit — a {pick.reasoning.win_rate != null ? `${((pick.reasoning.win_rate) * 100).toFixed(0)}% win rate means roughly ${Math.round((1 - pick.reasoning.win_rate) * 100)}% of games are losses` : 'majority of games are losses'}.
+              The strategy aims to come out ahead over a full session, not on every single draw.
+            </p>
           </div>
         )}
       </div>
 
-      {/* Save picks link */}
+      {/* Performance History */}
+      {history.length > 0 && (() => {
+        const scored = history.filter(h => h.games_scored > 0);
+        const totalGames = scored.reduce((s, h) => s + h.games_scored, 0);
+        const totalWins = scored.reduce((s, h) => s + h.wins, 0);
+        const totalPnl = scored.reduce((s, h) => s + h.total_pnl, 0);
+        const winningDays = scored.filter(h => h.total_pnl > 0).length;
+        return (
+          <div className="bg-surface rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(o => !o)}
+              className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-[#1e1e24] transition-colors"
+            >
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] mb-1">Virtual Play Record</p>
+                <div className="flex items-center gap-4">
+                  <span className="text-lg font-bold">
+                    <span className="text-green-400">{totalWins}W</span>
+                    <span className="text-slate-500 mx-1">–</span>
+                    <span className="text-red-400">{totalGames - totalWins}L</span>
+                  </span>
+                  <span className={`text-sm font-bold ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {scored.length} days · {winningDays} profitable
+                  </span>
+                </div>
+              </div>
+              <span className="text-slate-600">{historyOpen ? '▲' : '▼'}</span>
+            </button>
+
+            {historyOpen && (
+              <div className="border-t border-[#2a2a2e]">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                      <th className="px-4 py-2 text-left">Date</th>
+                      <th className="px-4 py-2 text-left">Play</th>
+                      <th className="px-4 py-2 text-left">W–L</th>
+                      <th className="px-4 py-2 text-right">P&L</th>
+                      <th className="px-4 py-2 text-right">Best Win</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map(h => (
+                      <tr key={h.pick_date} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                        <td className="px-4 py-2 font-mono text-slate-300">{h.pick_date}</td>
+                        <td className="px-4 py-2 text-slate-400">{h.spot_count}-spot</td>
+                        <td className="px-4 py-2">
+                          {h.games_scored > 0 ? (
+                            <>
+                              <span className="text-green-400">{h.wins}W</span>
+                              <span className="text-slate-500 mx-1">–</span>
+                              <span className="text-red-400">{h.games_scored - h.wins}L</span>
+                            </>
+                          ) : (
+                            <span className="text-slate-600">no data</span>
+                          )}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-mono ${h.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {h.games_scored > 0 ? `${h.total_pnl >= 0 ? '+' : ''}$${h.total_pnl.toFixed(2)}` : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {h.best_win > 0 ? `$${h.best_win}` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Navigation links */}
       <div className="flex gap-3">
-        <Link
-          href="/my-picks"
-          className="flex-1 py-3 rounded-lg bg-[#1e1e24] border border-[#333] hover:border-crimson/40 text-sm text-center text-slate-300 hover:text-white transition-colors"
-        >
-          Save Picks Manually →
-        </Link>
         <Link
           href="/monitor"
           className="flex-1 py-3 rounded-lg bg-[#1e1e24] border border-[#333] hover:border-crimson/40 text-sm text-center text-slate-300 hover:text-white transition-colors"

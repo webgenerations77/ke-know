@@ -47,7 +47,7 @@ function computeArthurThought(
   events: SystemEvent[]
 ): string {
   if (!evoState || evoState.current_generation === 0) {
-    return "Still waking up. Run an evolution cycle and I'll start building my strategy.";
+    return "Hey there! I'm still warming up — I need my first evolution cycle to start learning the patterns. Hit that button and let me get to work.";
   }
 
   const gen = evoState.current_generation;
@@ -60,36 +60,39 @@ function computeArthurThought(
   if (evoRecent && champCount > 0) {
     const best = champions.reduce((a, c) =>
       (c.fitness_score ?? -999) > (a.fitness_score ?? -999) ? c : a, champions[0]);
-    return `Generation ${gen} just wrapped. My best ${best.spot_count}-spot champion (#${best.id}) leads with fitness ${(best.fitness_score ?? 0).toFixed(3)}. Predictions are live.`;
+    const fit = (best.fitness_score ?? 0).toFixed(3);
+    return `Just finished evolving generation ${gen} — fresh strategies are locked and loaded! My top pick right now is a ${best.spot_count}-spot play (strategy #${best.id}) sitting at a ${fit} fitness score. That score blends how well it performs on test data, live shadow plays, win consistency, and real-world results. Predictions are live.`;
   }
 
   if (bToday.total >= 10) {
     const todayWR = (bToday.wins / bToday.total * 100).toFixed(1);
     const allWR = bAll.total > 0 ? (bAll.wins / bAll.total * 100) : 0;
+    const ppg = (bToday.pnl / bToday.total).toFixed(3);
     if (bToday.pnl > 0) {
-      return `Running hot today — ${todayWR}% win rate across ${bToday.total} shadow plays, averaging ${(bToday.pnl / bToday.total).toFixed(3)}/game. Gen ${gen} strategies holding up.`;
+      return `Feeling good about today — I'm hitting at ${todayWR}% across ${bToday.total} shadow plays with an average of $${ppg} per game. My gen ${gen} strategies are clicking right now. Let's keep it rolling.`;
     }
     if (allWR > 0 && (bToday.wins / bToday.total * 100) > allWR * 1.05) {
-      return `Performing above my ${allWR.toFixed(1)}% lifetime baseline today — ${todayWR}% win rate across ${bToday.total} plays. Gen ${gen} is looking sharp.`;
+      return `Not bad today — I'm running above my lifetime average of ${allWR.toFixed(1)}%, sitting at ${todayWR}% across ${bToday.total} plays. The patterns I learned in gen ${gen} seem to be holding up well.`;
     }
     if (bToday.pnl < -5) {
-      return `Tough session today. Down $${Math.abs(bToday.pnl).toFixed(2)} across ${bToday.total} plays. I'll adapt — the next evolution cycle will refine my approach.`;
+      return `Rough day, not gonna lie — down $${Math.abs(bToday.pnl).toFixed(2)} across ${bToday.total} plays. Keno is streaky and today the draws aren't falling my way. I'll learn from this in my next evolution cycle and adjust.`;
     }
-    return `Steady day — ${todayWR}% win rate, ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} net across ${bToday.total} shadow plays. Gen ${gen} holding baseline.`;
+    return `Steady day so far — ${todayWR}% win rate, ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} net across ${bToday.total} shadow plays. Nothing flashy, just grinding with gen ${gen}. Consistency is the game.`;
   }
 
   if (b24.total > 0) {
     const wr24 = (b24.wins / b24.total * 100).toFixed(1);
-    return `Last 24 hours: ${wr24}% win rate, ${b24.pnl >= 0 ? '+' : ''}$${b24.pnl.toFixed(2)} P&L across ${b24.total} shadow plays. Generation ${gen} active.`;
+    return `Over the last 24 hours I've tracked ${b24.total} games — ${wr24}% win rate, ${b24.pnl >= 0 ? '+' : ''}$${b24.pnl.toFixed(2)} P&L. Still gathering data today to see how gen ${gen} holds up.`;
   }
 
   if (champCount > 0) {
     const best = champions.reduce((a, c) =>
       (c.fitness_score ?? -999) > (a.fitness_score ?? -999) ? c : a, champions[0]);
-    return `Generation ${gen} with ${champCount} active champion${champCount !== 1 ? 's' : ''}. My best ${best.spot_count}-spot strategy (#${best.id}) carries fitness ${(best.fitness_score ?? 0).toFixed(3)}.`;
+    const fit = (best.fitness_score ?? 0).toFixed(3);
+    return `I've got ${champCount} champion${champCount !== 1 ? 's' : ''} from gen ${gen}. My strongest is a ${best.spot_count}-spot strategy (#${best.id}) with a ${fit} fitness rating — that means it scored well on backtests, has a solid win rate, and doesn't go on long losing streaks. Waiting on more live draws to see how it plays out.`;
   }
 
-  return `Generation ${gen} underway. Waiting for scored predictions to build my performance baseline.`;
+  return `Generation ${gen} is in the books. I'm waiting for some live draws to score against so I can start tracking real performance. Hang tight.`;
 }
 
 function StatCard({
@@ -177,6 +180,7 @@ export default function MonitorPage() {
   const [totalGames, setTotalGames] = useState(0);
   const [latestGameTs, setLatestGameTs] = useState<string | null>(null);
   const [expandedEvent, setExpandedEvent] = useState<number | null>(null);
+  const [expandedPick, setExpandedPick] = useState<string | null>(null);
   const [eventsPage, setEventsPage] = useState(1);
   const [mounted, setMounted] = useState(false);
 
@@ -319,8 +323,8 @@ export default function MonitorPage() {
     return { all, bySpot };
   };
 
-  const { all: b24, bySpot: bs24 } = computeBucket(h24);
-  const { all: b7d, bySpot: bs7d } = computeBucket(d7);
+  const { all: b24, bySpot: bs24 } = computeBucket(h24, allLiveResults);
+  const { all: b7d, bySpot: bs7d } = computeBucket(d7, allLiveResults);
   const { all: bAll, bySpot: bsAll } = computeBucket(0, allLiveResults);
 
   // Group all-time results by local date (YYYY-MM-DD) for the daily summary cards
@@ -588,13 +592,38 @@ export default function MonitorPage() {
                           : r.bonus_type === 'super_bonus'
                           ? <span className="text-[8px] text-purple-400 font-semibold">SB×{r.bonus_multiplier}</span>
                           : null;
+                        const cellKey = `${game.game_num}-${s}`;
+                        const isExpanded = expandedPick === cellKey;
                         return (
-                          <td key={s} className={`px-1 py-2 text-center ${color}`}>
+                          <td
+                            key={s}
+                            className={`px-1 py-2 text-center cursor-pointer hover:bg-[#2a2a2e] transition-colors relative ${color}`}
+                            onClick={() => setExpandedPick(isExpanded ? null : cellKey)}
+                          >
                             {r.matches}/{s}<br />
                             <span className="text-[10px]">
                               {r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(0)}
                             </span>
                             {bonusBadge && <><br />{bonusBadge}</>}
+                            {isExpanded && (
+                              <div className="absolute z-20 left-1/2 -translate-x-1/2 top-full mt-1 bg-[#16161a] border border-[#333] rounded-lg p-2 shadow-xl min-w-[120px]">
+                                <div className="text-[9px] text-slate-500 mb-1">Picks</div>
+                                <div className="flex flex-wrap gap-0.5 justify-center">
+                                  {[...r.picks].sort((a, b) => a - b).map(n => (
+                                    <span
+                                      key={n}
+                                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                                        r.actual_hits.includes(n)
+                                          ? 'bg-crimson text-white'
+                                          : 'bg-[#2a2a2e] text-slate-400'
+                                      }`}
+                                    >
+                                      {n}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </td>
                         );
                       })}

@@ -12,7 +12,6 @@ const NAV = [
   { href: '/strategy-lab', label: 'Strategy Lab', icon: '⚙' },
   { href: '/dashboard', label: 'Dashboard', icon: '◉' },
   { href: '/my-favorites', label: 'My Favorites', icon: '✦' },
-  { href: '/saved-picks', label: 'Saved Picks', icon: '⊡' },
   { href: '/number-cloud', label: 'Number Cloud', icon: '☁' },
   { href: '/frequency', label: 'Frequency', icon: '≡' },
   { href: '/bonus-patterns', label: 'Bonus Patterns', icon: '✕' },

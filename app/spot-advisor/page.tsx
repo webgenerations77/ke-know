@@ -9,7 +9,7 @@ import {
 import {
   computeNumberStats, computeBonusDist, expectedMultiplierFromDist,
 } from '@/lib/analysis';
-import { describeGenome, type StrategyGenome } from '@/lib/evolution/genome';
+import type { StrategyGenome } from '@/lib/evolution/genome';
 
 interface EvoChampion {
   strategy: Strategy;
@@ -56,6 +56,40 @@ function fmt(n: number) {
 
 function fmtEv(ev: number, wager: number) {
   return (ev * wager).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function summarizeChampion(rec: Recommendation): string {
+  const wr = rec.evoChampion?.result?.win_rate;
+  const ppg = rec.evoChampion?.result?.test_pnl_per_game;
+  const streak = rec.evoChampion?.result?.max_losing_streak;
+  const genome = rec.evoChampion?.strategy.genome as unknown as StrategyGenome | undefined;
+
+  const parts: string[] = [];
+
+  if (wr != null && wr > 0) {
+    const pct = (wr * 100).toFixed(0);
+    parts.push(`Wins about ${pct}% of the time in backtesting`);
+  }
+
+  if (ppg != null) {
+    if (ppg > 0) parts.push(`averages +$${ppg.toFixed(3)} per game`);
+    else parts.push(`averages $${ppg.toFixed(3)} per game`);
+  }
+
+  if (streak != null && streak > 0) {
+    parts.push(`longest cold streak was ${streak} games`);
+  }
+
+  if (genome?.bonus_type === 'bonus') {
+    parts.push('plays with Bonus for extra upside');
+  } else if (genome?.bonus_type === 'super_bonus') {
+    parts.push('plays Super Bonus for max multiplier');
+  }
+
+  if (parts.length === 0) return 'Arthur\'s top-ranked strategy for this spot count.';
+
+  return parts[0].charAt(0).toUpperCase() + parts[0].slice(1) +
+    (parts.length > 1 ? ', ' + parts.slice(1).join(', ') : '') + '.';
 }
 
 function Ball({ n }: { n: number }) {
@@ -255,7 +289,7 @@ export default function SpotAdvisorPage() {
 
               {rec.evoChampion && (
                 <p className="text-xs text-slate-400 italic">
-                  {describeGenome(rec.evoChampion.strategy.genome as unknown as StrategyGenome)}
+                  {summarizeChampion(rec)}
                 </p>
               )}
 
@@ -303,12 +337,9 @@ export default function SpotAdvisorPage() {
         </div>
 
         <p className="text-xs text-slate-500">
-          Evolution-Learned picks come from the highest-fitness promoted strategies — continuously backtested and
-          bred against real draw history (see Strategy Lab for the full leaderboard). EV-Based picks fill any
-          remaining slots using the static highest-expected-value spot counts until the engine promotes more
-          champions. &quot;Games to play&quot; is sized to ride out each strategy&apos;s worst historical losing
-          streak; &quot;Bonus to play&quot; is whichever of Base/Bonus/Super Bonus has the best EV per dollar for
-          that spot count.{!evoLoading && evoChampions.length === 0 && ' No evolution champions have been promoted yet — these will switch to evolution picks automatically once one is.'}
+          Arthur ranks these by testing strategies against thousands of real draws. &quot;Games to play&quot; gives the strategy
+          enough room to recover from cold streaks.
+          {!evoLoading && evoChampions.length === 0 && ' No champions promoted yet — run evolution to unlock Arthur\'s picks.'}
         </p>
       </div>
 

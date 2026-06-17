@@ -102,7 +102,7 @@ export function mutateGenome(
     g.weighting_method = WEIGHTING_METHODS[Math.floor(Math.random() * 3)];
     log.push(`weighting_method → ${g.weighting_method}`);
   }
-  if (Math.random() < 0.10) {
+  if (Math.random() < 0.20) {
     g.bonus_type = BONUS_TYPES[Math.floor(Math.random() * 3)];
     log.push(`bonus_type → ${g.bonus_type}`);
   }

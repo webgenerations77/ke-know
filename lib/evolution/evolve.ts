@@ -214,67 +214,97 @@ export async function runEvolution(): Promise<{
       db, (newChildren ?? []) as StrategyRow[], allGames, trainingEndIdx, testStartIdx, nextGen
     );
 
-    // Find best child
-    const bestChild = (newChildren ?? [] as StrategyRow[]).reduce<StrategyRow | null>((best, child) => {
-      const fit = childFitnessMap.get((child as StrategyRow).id) ?? -999;
-      const bestFit = best ? childFitnessMap.get(best.id) ?? -999 : -999;
-      return fit > bestFit ? (child as StrategyRow) : best;
-    }, null);
+    // Find best candidate across both children AND surviving parents
+    const allCandidates: { strategy: StrategyRow; fitness: number; source: 'child' | 'survivor' }[] = [];
 
-    // Find current champion
+    for (const child of (newChildren ?? []) as StrategyRow[]) {
+      allCandidates.push({
+        strategy: child,
+        fitness: childFitnessMap.get(child.id) ?? -999,
+        source: 'child',
+      });
+    }
+    for (const survivor of survivors) {
+      allCandidates.push({
+        strategy: survivor,
+        fitness: fitnessMap.get(survivor.id) ?? -999,
+        source: 'survivor',
+      });
+    }
+    allCandidates.sort((a, b) => b.fitness - a.fitness);
+
     const currentChampion = subPop.find(s => s.status === 'promoted');
-
-    // Check if best child should be promoted
-    const bestChildFitness = bestChild ? childFitnessMap.get(bestChild.id) ?? -999 : -999;
     const champFitness = currentChampion ? fitnessMap.get(currentChampion.id) ?? -999 : -999;
 
-    // Load test_pnl_per_game for bestChild to check eligibility
-    const { data: bestChildResult } = bestChild
-      ? await db.from('strategy_results')
-          .select('test_pnl_per_game')
-          .eq('strategy_id', bestChild.id)
-          .order('evaluated_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-      : { data: null };
+    // Find the best eligible candidate that outperforms the current champion
+    let promoted = false;
+    for (const candidate of allCandidates) {
+      if (currentChampion && candidate.strategy.id === currentChampion.id) continue;
+      if (candidate.fitness <= champFitness) break;
 
-    const bestChildTestPpg = bestChildResult?.test_pnl_per_game ?? -999;
-    const liveOk = !bestChild
-      ? false
-      : (liveStats.get(bestChild.id)?.count ?? 0) < 10 ||
-        (liveStats.get(bestChild.id)?.total_pnl ?? 0) >= 0;
+      const { data: candResult } = await db.from('strategy_results')
+        .select('test_pnl_per_game')
+        .eq('strategy_id', candidate.strategy.id)
+        .order('evaluated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    const eligible = bestChild &&
-      bestChildTestPpg > 0 &&
-      liveOk &&
-      bestChildFitness > champFitness;
+      const candTestPpg = candResult?.test_pnl_per_game ?? -999;
+      const candLiveOk =
+        (liveStats?.get(candidate.strategy.id)?.count ?? 0) < 10 ||
+        (liveStats?.get(candidate.strategy.id)?.total_pnl ?? 0) >= 0;
 
-    if (eligible && bestChild) {
-      // Demote current champion
-      if (currentChampion) {
-        await db.from('strategies').update({ status: 'active' }).eq('id', currentChampion.id);
-      }
-      // Promote new champion
-      await db.from('strategies').update({
-        status: 'promoted',
-        promoted_at: new Date().toISOString(),
-      }).eq('id', bestChild.id);
-
-      await db.from('system_events').insert({
-        event_type: 'strategy_promoted',
-        severity: 'success',
-        message: `Strategy #${bestChild.id} promoted as ${spotCount}-spot champion (gen ${nextGen}, fitness ${bestChildFitness.toFixed(4)})`,
-        metadata: { strategy_id: bestChild.id, spot_count: spotCount, generation: nextGen, fitness: bestChildFitness },
-      });
-      totalPromotions++;
-    } else if (!currentChampion) {
-      // Bootstrap: promote the best survivor if no champion exists
-      const bestSurvivor = survivors[0];
-      if (bestSurvivor) {
+      if (candTestPpg > 0 && candLiveOk) {
+        if (currentChampion) {
+          await db.from('strategies').update({ status: 'active' }).eq('id', currentChampion.id);
+        }
         await db.from('strategies').update({
           status: 'promoted',
           promoted_at: new Date().toISOString(),
-        }).eq('id', bestSurvivor.id);
+        }).eq('id', candidate.strategy.id);
+
+        await db.from('system_events').insert({
+          event_type: 'strategy_promoted',
+          severity: 'success',
+          message: `Strategy #${candidate.strategy.id} promoted as ${spotCount}-spot champion (gen ${nextGen}, fitness ${candidate.fitness.toFixed(4)}, ${candidate.source})`,
+          metadata: { strategy_id: candidate.strategy.id, spot_count: spotCount, generation: nextGen, fitness: candidate.fitness, source: candidate.source },
+        });
+        totalPromotions++;
+        promoted = true;
+        break;
+      }
+    }
+
+    if (!promoted && !currentChampion) {
+      // Bootstrap: promote best survivor with positive test P&L if possible
+      for (const candidate of allCandidates) {
+        const { data: candResult } = await db.from('strategy_results')
+          .select('test_pnl_per_game')
+          .eq('strategy_id', candidate.strategy.id)
+          .order('evaluated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if ((candResult?.test_pnl_per_game ?? -1) > 0) {
+          await db.from('strategies').update({
+            status: 'promoted',
+            promoted_at: new Date().toISOString(),
+          }).eq('id', candidate.strategy.id);
+          break;
+        }
+      }
+      // If none have positive test P&L, promote the best anyway to bootstrap
+      if (allCandidates.length > 0) {
+        const best = allCandidates[0];
+        const { data: existCheck } = await db.from('strategies')
+          .select('status')
+          .eq('id', best.strategy.id)
+          .maybeSingle();
+        if (existCheck && existCheck.status !== 'promoted') {
+          await db.from('strategies').update({
+            status: 'promoted',
+            promoted_at: new Date().toISOString(),
+          }).eq('id', best.strategy.id);
+        }
       }
     }
   }

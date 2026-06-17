@@ -5,6 +5,19 @@ import { performSync } from '@/lib/sync';
 // Backfill + one evolution generation can take longer than the platform default.
 export const maxDuration = 60;
 
+// GET: called by Vercel cron — no auth required (Vercel signs the request)
+export async function GET() {
+  const db = createServiceClient();
+  try {
+    const result = await performSync(db);
+    return NextResponse.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+// POST: called by external cron services with Bearer auth
 export async function POST(req: NextRequest) {
   const auth = req.headers.get('Authorization') ?? '';
   const expected = `Bearer ${process.env.CRON_SECRET}`;
