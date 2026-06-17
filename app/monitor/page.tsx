@@ -188,7 +188,6 @@ export default function MonitorPage() {
     const [
       { data: evts },
       { data: results },
-      { data: allResults },
       { data: games },
       { data: evo },
       { data: champs },
@@ -198,7 +197,6 @@ export default function MonitorPage() {
     ] = await Promise.all([
       supabase.from('system_events').select('*').order('occurred_at', { ascending: false }).limit(100),
       supabase.from('live_results').select('*').order('scored_at', { ascending: false }).limit(200),
-      supabase.from('live_results').select('*').order('scored_at', { ascending: false }).limit(20000),
       supabase.from('games').select('*').order('game_num', { ascending: false }).limit(20),
       supabase.from('evolution_state').select('*').eq('id', 1).single(),
       supabase.from('strategies').select('id,spot_count,generation').eq('status', 'promoted').order('spot_count'),
@@ -208,9 +206,25 @@ export default function MonitorPage() {
       supabase.from('games').select('draw_iso').order('game_num', { ascending: false }).limit(1).maybeSingle(),
     ]);
 
+    // Paginate through all live_results (Supabase caps at 1000 rows per request)
+    const allResults: LiveResult[] = [];
+    let offset = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data: page } = await supabase
+        .from('live_results')
+        .select('*')
+        .order('scored_at', { ascending: false })
+        .range(offset, offset + PAGE - 1);
+      if (!page || page.length === 0) break;
+      allResults.push(...(page as LiveResult[]));
+      if (page.length < PAGE) break;
+      offset += PAGE;
+    }
+
     if (evts) setEvents(evts as SystemEvent[]);
     if (results) setLiveResults(results as LiveResult[]);
-    if (allResults) setAllLiveResults(allResults as LiveResult[]);
+    setAllLiveResults(allResults);
     if (games) setRecentGames(games as Game[]);
     if (evo) setEvoState(evo as EvolutionState);
     if (count !== null) setTotalGames(count);
@@ -275,7 +289,7 @@ export default function MonitorPage() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_results' },
         payload => {
           setLiveResults(prev => [payload.new as LiveResult, ...prev].slice(0, 200));
-          setAllLiveResults(prev => [payload.new as LiveResult, ...prev].slice(0, 20000));
+          setAllLiveResults(prev => [payload.new as LiveResult, ...prev]);
         })
       .subscribe();
 
