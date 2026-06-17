@@ -6,36 +6,18 @@ import type { Game } from '@/lib/supabase';
 
 export const maxDuration = 60;
 
-export async function GET() {
-  const db = createServiceClient();
-  const today = new Date().toLocaleDateString('en-CA');
-  const { data, error } = await db
-    .from('daily_picks')
-    .select('*')
-    .eq('pick_date', today)
-    .maybeSingle();
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, pick: data ?? null });
-}
-
-export async function POST() {
-  const db = createServiceClient();
+async function generateDailyPick(db: ReturnType<typeof createServiceClient>) {
   const today = new Date().toLocaleDateString('en-CA');
 
-  // Load all promoted champions
   const { data: champions, error: champErr } = await db
     .from('strategies')
     .select('id, spot_count, genome')
     .eq('status', 'promoted');
 
   if (champErr || !champions?.length) {
-    return NextResponse.json(
-      { ok: false, error: 'No champions found — run Evolution first' },
-      { status: 400 }
-    );
+    return { ok: false as const, error: 'No champions found — run Evolution first' };
   }
 
-  // Get latest fitness for each champion (ordered desc so first row per id = latest)
   const champIds = champions.map((c: any) => c.id as number);
   const { data: results } = await db
     .from('strategy_results')
@@ -61,7 +43,6 @@ export async function POST() {
     }
   }
 
-  // Select champion with highest fitness score
   let bestChamp: (typeof champions)[0] | null = null;
   let bestFitness = -Infinity;
   let bestResult: { fitness_score: number; test_pnl_per_game: number; win_rate: number; max_losing_streak: number } | undefined;
@@ -77,31 +58,29 @@ export async function POST() {
   }
 
   if (!bestChamp) {
-    return NextResponse.json({ ok: false, error: 'Could not determine best champion' }, { status: 500 });
+    return { ok: false as const, error: 'Could not determine best champion' };
   }
 
   const genome = bestChamp.genome as StrategyGenome;
   const spotCount = bestChamp.spot_count as number;
 
-  // Load all games for pick generation
   const { data: games, error: gamesErr } = await db
     .from('games')
     .select('game_num,draw_date,draw_iso,draw_dow,bonus,super_bonus,hits')
     .order('game_num', { ascending: true });
 
   if (gamesErr || !games?.length) {
-    return NextResponse.json({ ok: false, error: 'Failed to load games' }, { status: 500 });
+    return { ok: false as const, error: 'Failed to load games' };
   }
 
   const picks = generatePicks(genome, spotCount, games as Game[]);
 
-  // Analyze live_results by ET hour (12–18) to find the best play window
   const { data: liveResults } = await db
     .from('live_results')
     .select('game_num, pnl, prize')
     .eq('strategy_id', bestChamp.id as number);
 
-  let bestHour = 14; // default: 2 PM ET
+  let bestHour = 14;
 
   const gameNums = (liveResults ?? []).map((r: any) => r.game_num as number);
   if (gameNums.length > 0) {
@@ -115,7 +94,6 @@ export async function POST() {
       timeMap.set(g.game_num as number, g.draw_iso as string);
     }
 
-    // UTC-4 = EDT (Maryland summer); acceptable approximation year-round
     const hourStats = new Map<number, { total: number; pnl: number; wins: number }>();
     for (const r of liveResults ?? []) {
       const iso = timeMap.get(r.game_num as number);
@@ -145,37 +123,10 @@ export async function POST() {
   const recommendedGames = 20;
   const expectedPpg = bestResult?.test_pnl_per_game ?? 0;
 
-  const { error: upsertErr } = await db.from('daily_picks').upsert(
-    {
-      pick_date: today,
-      generated_at: new Date().toISOString(),
-      strategy_id: bestChamp.id,
-      spot_count: spotCount,
-      picks,
-      bonus_type: bonusType,
-      wager_per_game: wagerPerGame,
-      recommended_games: recommendedGames,
-      best_hour: bestHour,
-      expected_pnl_per_game: expectedPpg,
-      expected_total_pnl: expectedPpg * recommendedGames,
-      fitness_score: bestFitness,
-      reasoning: {
-        champion_id: bestChamp.id,
-        shadow_plays: liveResults?.length ?? 0,
-        win_rate: bestResult?.win_rate ?? 0,
-        max_losing_streak: bestResult?.max_losing_streak ?? 0,
-      },
-    },
-    { onConflict: 'pick_date' }
-  );
-
-  if (upsertErr) {
-    return NextResponse.json({ ok: false, error: upsertErr.message }, { status: 500 });
-  }
-
-  return NextResponse.json({
-    ok: true,
+  const pickRow = {
     pick_date: today,
+    generated_at: new Date().toISOString(),
+    strategy_id: bestChamp.id,
     spot_count: spotCount,
     picks,
     bonus_type: bonusType,
@@ -185,5 +136,63 @@ export async function POST() {
     expected_pnl_per_game: expectedPpg,
     expected_total_pnl: expectedPpg * recommendedGames,
     fitness_score: bestFitness,
-  });
+    reasoning: {
+      champion_id: bestChamp.id,
+      shadow_plays: liveResults?.length ?? 0,
+      win_rate: bestResult?.win_rate ?? 0,
+      max_losing_streak: bestResult?.max_losing_streak ?? 0,
+    },
+  };
+
+  const { error: upsertErr } = await db
+    .from('daily_picks')
+    .upsert(pickRow, { onConflict: 'pick_date' });
+
+  if (upsertErr) {
+    return { ok: false as const, error: upsertErr.message };
+  }
+
+  return { ok: true as const, ...pickRow };
+}
+
+// GET: return today's pick — auto-generate if none exists (Vercel cron calls GET)
+export async function GET() {
+  const db = createServiceClient();
+  const today = new Date().toLocaleDateString('en-CA');
+
+  const { data: existing } = await db
+    .from('daily_picks')
+    .select('*')
+    .eq('pick_date', today)
+    .maybeSingle();
+
+  if (existing) {
+    return NextResponse.json({ ok: true, pick: existing });
+  }
+
+  // No pick for today — generate it automatically
+  const result = await generateDailyPick(db);
+  if (!result.ok) {
+    return NextResponse.json({ ok: true, pick: null });
+  }
+
+  const { data: freshPick } = await db
+    .from('daily_picks')
+    .select('*')
+    .eq('pick_date', today)
+    .maybeSingle();
+
+  return NextResponse.json({ ok: true, pick: freshPick ?? null });
+}
+
+// POST: force-regenerate today's pick (manual refresh button)
+export async function POST() {
+  const db = createServiceClient();
+  const result = await generateDailyPick(db);
+
+  if (!result.ok) {
+    return NextResponse.json({ ok: false, error: result.error }, { status: 400 });
+  }
+
+  return NextResponse.json(result);
 }
