@@ -360,6 +360,7 @@ export default function MonitorPage() {
   const [mounted, setMounted] = useState(false);
   const [evoDetailOpen, setEvoDetailOpen] = useState(false);
   const [biggestWinOpen, setBiggestWinOpen] = useState(false);
+  const [stratGenMap, setStratGenMap] = useState<Map<number, number>>(new Map());
 
   const loadAll = useCallback(async () => {
     const [
@@ -405,6 +406,23 @@ export default function MonitorPage() {
     if (evo) setEvoState(evo as EvolutionState);
     if (count !== null) setTotalGames(count);
     if (latestGame) setLatestGameTs(latestGame.draw_iso);
+
+    // Load strategy→generation mapping for all strategies that have live results
+    const stratIds = [...new Set(allResults.map(r => r.strategy_id))];
+    if (stratIds.length > 0) {
+      const genMap = new Map<number, number>();
+      for (let i = 0; i < stratIds.length; i += 100) {
+        const batch = stratIds.slice(i, i + 100);
+        const { data: strats } = await supabase
+          .from('strategies')
+          .select('id,generation')
+          .in('id', batch);
+        for (const s of strats ?? []) {
+          genMap.set(s.id as number, s.generation as number);
+        }
+      }
+      setStratGenMap(genMap);
+    }
 
     if (champs) {
       const champData = await Promise.all(
@@ -568,11 +586,10 @@ export default function MonitorPage() {
     });
   }
 
-  // Evolution generation breakdown from allLiveResults
+  // Evolution generation breakdown from allLiveResults using full strategy→generation map
   const genBreakdown = new Map<number, { wins: number; losses: number; pnl: number; total: number }>();
   for (const r of allLiveResults) {
-    const champ = champions.find(c => c.id === r.strategy_id);
-    const gen = champ?.generation ?? 0;
+    const gen = stratGenMap.get(r.strategy_id) ?? 0;
     const entry = genBreakdown.get(gen) ?? { wins: 0, losses: 0, pnl: 0, total: 0 };
     entry.total++;
     entry.pnl += r.pnl;
@@ -580,7 +597,9 @@ export default function MonitorPage() {
     else entry.losses++;
     genBreakdown.set(gen, entry);
   }
-  const genRows = [...genBreakdown.entries()].sort((a, b) => b[0] - a[0]);
+  const genRows = [...genBreakdown.entries()]
+    .filter(([gen]) => gen > 0)
+    .sort((a, b) => b[0] - a[0]);
 
   const SPOT_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899','#94a3b8','#f1f5f9'];
 
@@ -662,7 +681,7 @@ export default function MonitorPage() {
       </div>
 
       {/* ── TOP: Evolution + Database + Biggest Win ── */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <StatCard
           label="Evolution"
           value={evoState?.current_generation ? `Gen ${evoState.current_generation}` : 'Not started'}
