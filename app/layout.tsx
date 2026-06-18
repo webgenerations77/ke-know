@@ -23,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   alt="KE-KNOW"
                   width={640}
                   height={200}
-                  style={{ height: '144px', width: 'auto', objectFit: 'contain' }}
+                  style={{ height: '72px', width: 'auto', objectFit: 'contain' }}
                   priority
                 />
               </header>

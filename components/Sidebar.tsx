@@ -17,7 +17,6 @@ const NAV = [
   { href: '/bonus-patterns', label: 'Bonus Patterns', icon: '✕' },
   { href: '/time-patterns', label: 'Time Patterns', icon: '◷' },
   { href: '/draw-history', label: 'Draw History', icon: '⊞' },
-  { href: '/data-ingestion', label: 'Data Ingestion', icon: '⬆' },
 ];
 
 export function Sidebar() {
