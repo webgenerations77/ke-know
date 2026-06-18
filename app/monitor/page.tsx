@@ -38,61 +38,233 @@ function Dot({ ok }: { ok: boolean }) {
   );
 }
 
-function computeArthurThought(
-  evoState: EvolutionState | null,
-  champions: { spot_count: number; fitness_score: number | null; id: number; generation: number }[],
-  bToday: PerformanceBucket,
-  bAll: PerformanceBucket,
-  b24: PerformanceBucket,
-  events: SystemEvent[]
-): string {
+interface ArthurContext {
+  evoState: EvolutionState | null;
+  champions: { spot_count: number; fitness_score: number | null; id: number; generation: number }[];
+  bToday: PerformanceBucket;
+  bAll: PerformanceBucket;
+  b24: PerformanceBucket;
+  events: SystemEvent[];
+  allLiveResults: LiveResult[];
+  dailyMap: Map<string, PerformanceBucket>;
+}
+
+interface ArthurOutput {
+  main: string;
+  mood: 'fire' | 'good' | 'steady' | 'down' | 'waiting';
+  observations: string[];
+}
+
+function computeArthurFull(ctx: ArthurContext): ArthurOutput {
+  const { evoState, champions, bToday, bAll, b24, events, allLiveResults, dailyMap } = ctx;
+
   if (!evoState || evoState.current_generation === 0) {
-    return "Alright, I'm brand new here. Haven't even had my first look at the data yet. Hit that evolution button and let me start learning — I promise I'll have something to say once I've crunched some numbers.";
+    return {
+      main: "I'm brand new here — haven't had my first look at the data yet. Hit that evolution button and let me start learning. I promise I'll have plenty to say once I've crunched some numbers.",
+      mood: 'waiting',
+      observations: [],
+    };
   }
 
   const gen = evoState.current_generation;
   const champCount = champions.length;
+  const now = Date.now();
 
+  // ── Reactive: what just happened? ──
   const lastEvoEvt = events.find(e => e.event_type === 'evolution_complete');
-  const evoRecent = lastEvoEvt
-    && (Date.now() - new Date(lastEvoEvt.occurred_at).getTime()) < 30 * 60 * 1000;
+  const evoRecent = lastEvoEvt && (now - new Date(lastEvoEvt.occurred_at).getTime()) < 30 * 60 * 1000;
+
+  // Most recent results for streak detection
+  const recentSorted = [...allLiveResults]
+    .sort((a, b) => new Date(b.scored_at).getTime() - new Date(a.scored_at).getTime());
+  const lastResult = recentSorted[0] ?? null;
+
+  // Current streak
+  let streakType: 'win' | 'loss' | null = null;
+  let streakCount = 0;
+  for (const r of recentSorted) {
+    const isWin = r.prize > 0;
+    if (streakType === null) {
+      streakType = isWin ? 'win' : 'loss';
+      streakCount = 1;
+    } else if ((isWin && streakType === 'win') || (!isWin && streakType === 'loss')) {
+      streakCount++;
+    } else {
+      break;
+    }
+  }
+
+  // ── Spot-level opinions (today) ──
+  const todayBySpot = new Map<number, PerformanceBucket>();
+  const todayKey = new Date().toLocaleDateString('en-CA');
+  for (const r of allLiveResults) {
+    if (new Date(r.scored_at).toLocaleDateString('en-CA') !== todayKey) continue;
+    const b = todayBySpot.get(r.spot_count) ?? emptyBucket();
+    b.total++; b.pnl += r.pnl;
+    if (r.prize > 0) b.wins++;
+    if (r.prize > b.best) b.best = r.prize;
+    todayBySpot.set(r.spot_count, b);
+  }
+
+  // Weekly spot trends
+  const weekBySpot = new Map<number, PerformanceBucket>();
+  const weekAgo = now - 7 * 86400000;
+  for (const r of allLiveResults) {
+    if (new Date(r.scored_at).getTime() < weekAgo) continue;
+    const b = weekBySpot.get(r.spot_count) ?? emptyBucket();
+    b.total++; b.pnl += r.pnl;
+    if (r.prize > 0) b.wins++;
+    if (r.prize > b.best) b.best = r.prize;
+    weekBySpot.set(r.spot_count, b);
+  }
+
+  // Find best/worst spot this week
+  let bestWeekSpot = 0, worstWeekSpot = 0;
+  let bestWeekPpg = -Infinity, worstWeekPpg = Infinity;
+  for (const [spot, b] of weekBySpot) {
+    if (b.total < 5) continue;
+    const ppg = b.pnl / b.total;
+    if (ppg > bestWeekPpg) { bestWeekPpg = ppg; bestWeekSpot = spot; }
+    if (ppg < worstWeekPpg) { worstWeekPpg = ppg; worstWeekSpot = spot; }
+  }
+
+  // Find best/worst spot today
+  let bestTodaySpot = 0, worstTodaySpot = 0;
+  let bestTodayPpg = -Infinity, worstTodayPpg = Infinity;
+  for (const [spot, b] of todayBySpot) {
+    if (b.total < 3) continue;
+    const ppg = b.pnl / b.total;
+    if (ppg > bestTodayPpg) { bestTodayPpg = ppg; bestTodaySpot = spot; }
+    if (ppg < worstTodayPpg) { worstTodayPpg = ppg; worstTodaySpot = spot; }
+  }
+
+  // Day-over-day trend: was yesterday better or worse?
+  const yesterday = new Date(now - 86400000).toLocaleDateString('en-CA');
+  const bYesterday = dailyMap.get(yesterday);
+
+  // All-time best single win
+  const allTimeBest = allLiveResults.length > 0
+    ? allLiveResults.reduce((best, r) => r.prize > best.prize ? r : best, allLiveResults[0])
+    : null;
+
+  // Profitable days count
+  const dailyEntries = [...dailyMap.entries()];
+  const profitableDays = dailyEntries.filter(([, b]) => b.pnl > 0).length;
+  const totalDays = dailyEntries.length;
+
+  // Time of day
+  const hour = new Date().getHours();
+  const timeOfDay = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+
+  // ── Build observations (secondary insights) ──
+  const observations: string[] = [];
+
+  // Streak observation
+  if (streakType === 'win' && streakCount >= 3) {
+    observations.push(`On a ${streakCount}-game win streak right now. Feeling dangerous.`);
+  } else if (streakType === 'loss' && streakCount >= 5) {
+    observations.push(`${streakCount} losses in a row — cold stretch, but I've seen worse. The math hasn't changed.`);
+  } else if (streakType === 'loss' && streakCount >= 10) {
+    observations.push(`Brutal ${streakCount}-game losing streak. This is exactly why I track max cold streaks in my fitness score — I need strategies that can survive this.`);
+  }
+
+  // Spot-specific opinion (weekly trend)
+  if (bestWeekSpot > 0 && bestWeekPpg > 0 && weekBySpot.get(bestWeekSpot)!.total >= 10) {
+    observations.push(`${bestWeekSpot}-spot has been my best play this week — averaging +$${bestWeekPpg.toFixed(2)}/game. I'm leaning into it.`);
+  }
+  if (worstWeekSpot > 0 && worstWeekPpg < -0.5 && bestWeekSpot !== worstWeekSpot && weekBySpot.get(worstWeekSpot)!.total >= 10) {
+    observations.push(`${worstWeekSpot}-spot has been giving me trouble all week. Might need a strategy shake-up there next evolution.`);
+  }
+
+  // Today's standout spot
+  if (bestTodaySpot > 0 && bestTodayPpg > 0.5 && todayBySpot.get(bestTodaySpot)!.total >= 5) {
+    observations.push(`${bestTodaySpot}-spot is on fire today — $${bestTodayPpg.toFixed(2)}/game avg across ${todayBySpot.get(bestTodaySpot)!.total} plays.`);
+  }
+
+  // Day-over-day comparison
+  if (bYesterday && bYesterday.total >= 10 && bToday.total >= 10) {
+    const yPpg = bYesterday.pnl / bYesterday.total;
+    const tPpg = bToday.pnl / bToday.total;
+    if (tPpg > yPpg + 0.1) {
+      observations.push(`Running better than yesterday — that's the kind of trend I like to see.`);
+    } else if (tPpg < yPpg - 0.3) {
+      observations.push(`Yesterday was better. Keno doesn't owe me consistency, but I take notes.`);
+    }
+  }
+
+  // Profitable days ratio
+  if (totalDays >= 5) {
+    const pct = Math.round((profitableDays / totalDays) * 100);
+    if (pct >= 50) {
+      observations.push(`Profitable on ${profitableDays} out of ${totalDays} days tracked (${pct}%). Not bad for a game designed to beat you.`);
+    } else if (pct < 30 && totalDays >= 7) {
+      observations.push(`Only ${profitableDays} profitable days out of ${totalDays}. I'm working on it — each evolution cycle teaches me something new.`);
+    }
+  }
+
+  // All-time best win memory
+  if (allTimeBest && allTimeBest.prize >= 10) {
+    observations.push(`My best hit so far: $${allTimeBest.prize} on a ${allTimeBest.spot_count}-spot play (${allTimeBest.matches}/${allTimeBest.spot_count} matches, game #${allTimeBest.game_num}). That's the kind of moment I'm always chasing.`);
+  }
+
+  // Last result reaction
+  if (lastResult && (now - new Date(lastResult.scored_at).getTime()) < 10 * 60 * 1000) {
+    if (lastResult.prize >= 50) {
+      observations.push(`Just hit $${lastResult.prize} on a ${lastResult.spot_count}-spot play! ${lastResult.matches}/${lastResult.spot_count} matches. That's what I'm talking about.`);
+    } else if (lastResult.prize > 0 && lastResult.prize < 50) {
+      observations.push(`Small win on the last game — $${lastResult.prize} on ${lastResult.spot_count}-spot. Not huge but it keeps the bankroll moving.`);
+    }
+  }
+
+  // Limit to 2 most interesting observations
+  const topObs = observations.slice(0, 2);
+
+  // ── Build main thought ──
+  let main = '';
+  let mood: ArthurOutput['mood'] = 'steady';
 
   if (evoRecent && champCount > 0) {
     const best = champions.reduce((a, c) =>
       (c.fitness_score ?? -999) > (a.fitness_score ?? -999) ? c : a, champions[0]);
     const fit = (best.fitness_score ?? 0).toFixed(3);
-    return `Just got done evolving — generation ${gen} is live! I'm feeling strongest about a ${best.spot_count}-spot play right now (strategy #${best.id}). Its fitness score is ${fit} — that's my confidence rating combining backtest performance, live shadow play results, win consistency, and how well it avoids long cold streaks. Higher is better, and this one's earned its spot at the top. Let's see how it plays out.`;
-  }
-
-  if (bToday.total >= 10) {
+    main = `Fresh out of evolution — gen ${gen} is live and I've got new strategies to prove. Leading with a ${best.spot_count}-spot play right now (fitness: ${fit}). That score is my confidence rating — it blends backtest performance, live results, win consistency, and cold streak resilience. The higher it is, the more I trust it. Let's see what this generation can do.`;
+    mood = 'good';
+  } else if (bToday.total >= 10) {
     const todayWR = (bToday.wins / bToday.total * 100).toFixed(1);
     const allWR = bAll.total > 0 ? (bAll.wins / bAll.total * 100) : 0;
-    const ppg = (bToday.pnl / bToday.total).toFixed(3);
-    if (bToday.pnl > 0) {
-      return `Good vibes today! I'm running hot — ${todayWR}% win rate across ${bToday.total} shadow plays, averaging $${ppg} per game. The gen ${gen} strategies are dialed in. Keno's a grind, but days like this remind me why I keep evolving.`;
+    if (bToday.pnl > 2) {
+      main = `Good ${timeOfDay}! Up $${bToday.pnl.toFixed(2)} across ${bToday.total} shadow plays today — ${todayWR}% win rate. Gen ${gen} is putting in work.`;
+      mood = bToday.pnl > 5 ? 'fire' : 'good';
+    } else if (allWR > 0 && (bToday.wins / bToday.total * 100) > allWR * 1.1) {
+      main = `Outperforming my lifetime average today — ${todayWR}% vs my usual ${allWR.toFixed(1)}%. I'll take it. ${bToday.total} plays deep and the gen ${gen} strategies are reading the game well.`;
+      mood = 'good';
+    } else if (bToday.pnl < -5) {
+      const absLoss = Math.abs(bToday.pnl).toFixed(2);
+      main = `Rough ${timeOfDay} — down $${absLoss} across ${bToday.total} plays. The draws aren't cooperating, but that's the nature of the game. I don't panic, I adapt. Next evolution cycle, I'll factor in what I'm learning from today's patterns.`;
+      mood = 'down';
+    } else if (bToday.pnl < -1) {
+      main = `Grinding through a tough spot today — slightly negative at ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} across ${bToday.total} plays. ${todayWR}% win rate isn't terrible, just need the bigger catches to start landing.`;
+      mood = 'steady';
+    } else {
+      main = `Steady ${timeOfDay} so far — ${todayWR}% win rate, ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} net across ${bToday.total} plays. Nothing flashy, but I'm playing the long game with gen ${gen}. Consistency beats fireworks.`;
+      mood = 'steady';
     }
-    if (allWR > 0 && (bToday.wins / bToday.total * 100) > allWR * 1.05) {
-      return `Not bad at all — I'm beating my lifetime average today. Sitting at ${todayWR}% vs my usual ${allWR.toFixed(1)}% across ${bToday.total} plays. Gen ${gen} seems to be reading the patterns well. Nothing guaranteed in Keno, but I like where this is heading.`;
-    }
-    if (bToday.pnl < -5) {
-      return `Tough day at the office — down $${Math.abs(bToday.pnl).toFixed(2)} across ${bToday.total} plays. The draws just aren't lining up with my picks today, and that's Keno for you. I'll take these lumps into my next evolution cycle and adjust my approach. Every loss teaches me something.`;
-    }
-    return `Steady as she goes — ${todayWR}% win rate, ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} net across ${bToday.total} shadow plays. Not spectacular, not bad. I'm playing the long game with gen ${gen} and letting the math do its thing.`;
-  }
-
-  if (b24.total > 0) {
+  } else if (b24.total > 0) {
     const wr24 = (b24.wins / b24.total * 100).toFixed(1);
-    return `Been watching the last 24 hours — ${b24.total} games tracked so far at a ${wr24}% win rate (${b24.pnl >= 0 ? '+' : ''}$${b24.pnl.toFixed(2)} P&L). Still early in the day, gathering more data to see how gen ${gen} holds up. Patience is half the game.`;
-  }
-
-  if (champCount > 0) {
+    main = `Tracked ${b24.total} games in the last 24 hours — ${wr24}% win rate, ${b24.pnl >= 0 ? '+' : ''}$${b24.pnl.toFixed(2)} P&L. Still gathering data this ${timeOfDay} to see how gen ${gen} handles today's draws.`;
+    mood = b24.pnl >= 0 ? 'good' : 'steady';
+  } else if (champCount > 0) {
     const best = champions.reduce((a, c) =>
       (c.fitness_score ?? -999) > (a.fitness_score ?? -999) ? c : a, champions[0]);
     const fit = (best.fitness_score ?? 0).toFixed(3);
-    return `I've got ${champCount} champion${champCount !== 1 ? 's' : ''} ready to go from gen ${gen}. My top dog is a ${best.spot_count}-spot strategy (#${best.id}) with a ${fit} fitness rating — that number represents how confident I am in it based on backtesting, shadow play results, and win consistency. Just waiting on live draws to start tracking real performance.`;
+    main = `Got ${champCount} champion${champCount !== 1 ? 's' : ''} loaded up from gen ${gen}. My strongest is a ${best.spot_count}-spot strategy with a ${fit} fitness rating — that represents my confidence based on how it performed in backtesting, how consistent its wins are, and how well it handles cold streaks. Waiting on live draws to start keeping score.`;
+    mood = 'waiting';
+  } else {
+    main = `Gen ${gen} strategies are locked in. Waiting on live draws to score against — once the data starts flowing, I'll have a lot more to say.`;
+    mood = 'waiting';
   }
 
-  return `Generation ${gen} is in the books. My strategies are locked in and I'm waiting for some live draws to score against. Once the data starts flowing, I'll have a lot more to say. Hang tight.`;
+  return { main, mood, observations: topObs };
 }
 
 function StatCard({
@@ -414,7 +586,41 @@ export default function MonitorPage() {
 
   if (!mounted) return null;
 
-  const arthurThought = computeArthurThought(evoState, champions, bToday, bAll, b24, events);
+  const arthur = computeArthurFull({
+    evoState, champions, bToday, bAll, b24, events, allLiveResults, dailyMap,
+  });
+
+  const moodGradient = {
+    fire: 'rgba(239,68,68,0.08)',
+    good: 'rgba(34,197,94,0.06)',
+    steady: 'rgba(139,26,74,0.06)',
+    down: 'rgba(239,68,68,0.04)',
+    waiting: 'rgba(100,116,139,0.04)',
+  }[arthur.mood];
+
+  const moodDotColor = {
+    fire: 'bg-red-400',
+    good: 'bg-green-400',
+    steady: 'bg-green-500/70',
+    down: 'bg-amber-400',
+    waiting: 'bg-slate-500',
+  }[arthur.mood];
+
+  const moodPingColor = {
+    fire: 'bg-red-400',
+    good: 'bg-green-400',
+    steady: 'bg-green-400',
+    down: 'bg-amber-400',
+    waiting: 'bg-slate-400',
+  }[arthur.mood];
+
+  const moodLabel = {
+    fire: 'On Fire',
+    good: 'Feeling Good',
+    steady: 'Locked In',
+    down: 'Grinding',
+    waiting: 'Standing By',
+  }[arthur.mood];
 
   return (
     <div className="space-y-6">
@@ -423,7 +629,7 @@ export default function MonitorPage() {
       {/* ── Arthur's Current Thought ── */}
       <div className="relative rounded-xl border border-[#2a2a2e] bg-surface overflow-hidden">
         <div className="absolute inset-0 pointer-events-none"
-          style={{ background: 'radial-gradient(ellipse 80% 100% at 0% 50%, rgba(139,26,74,0.06) 0%, transparent 60%)' }} />
+          style={{ background: `radial-gradient(ellipse 80% 100% at 0% 50%, ${moodGradient} 0%, transparent 60%)` }} />
         <div className="relative flex items-start gap-4 px-5 py-4">
           <div className="shrink-0 mt-0.5 flex items-center justify-center w-8 h-8 rounded-full bg-crimson/10 border border-crimson/20">
             <span className="text-crimson text-xs font-bold tracking-tight">A</span>
@@ -432,14 +638,25 @@ export default function MonitorPage() {
             <div className="flex items-center gap-2 mb-1.5">
               <span className="text-[10px] font-semibold text-crimson/70 uppercase tracking-widest">Arthur</span>
               <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-40" />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500/70" />
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${moodPingColor} opacity-40`} />
+                <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${moodDotColor}`} />
               </span>
+              <span className="text-[10px] text-slate-600">{moodLabel}</span>
               {evoState?.current_generation ? (
-                <span className="text-[10px] text-slate-600">Gen {evoState.current_generation}</span>
+                <span className="text-[10px] text-slate-700">· Gen {evoState.current_generation}</span>
               ) : null}
             </div>
-            <p className="text-sm text-slate-300 leading-relaxed">{arthurThought}</p>
+            <p className="text-sm text-slate-300 leading-relaxed">{arthur.main}</p>
+            {arthur.observations.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-[#1e1e24] space-y-1.5">
+                {arthur.observations.map((obs, i) => (
+                  <p key={i} className="text-xs text-slate-500 leading-relaxed flex items-start gap-2">
+                    <span className="text-slate-700 mt-0.5 shrink-0">{'>'}</span>
+                    {obs}
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
