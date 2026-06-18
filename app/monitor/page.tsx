@@ -47,7 +47,7 @@ function computeArthurThought(
   events: SystemEvent[]
 ): string {
   if (!evoState || evoState.current_generation === 0) {
-    return "Hey there! I'm still warming up — I need my first evolution cycle to start learning the patterns. Hit that button and let me get to work.";
+    return "Alright, I'm brand new here. Haven't even had my first look at the data yet. Hit that evolution button and let me start learning — I promise I'll have something to say once I've crunched some numbers.";
   }
 
   const gen = evoState.current_generation;
@@ -61,7 +61,7 @@ function computeArthurThought(
     const best = champions.reduce((a, c) =>
       (c.fitness_score ?? -999) > (a.fitness_score ?? -999) ? c : a, champions[0]);
     const fit = (best.fitness_score ?? 0).toFixed(3);
-    return `Just finished evolving generation ${gen} — fresh strategies are locked and loaded! My top pick right now is a ${best.spot_count}-spot play (strategy #${best.id}) sitting at a ${fit} fitness score. That score blends how well it performs on test data, live shadow plays, win consistency, and real-world results. Predictions are live.`;
+    return `Just got done evolving — generation ${gen} is live! I'm feeling strongest about a ${best.spot_count}-spot play right now (strategy #${best.id}). Its fitness score is ${fit} — that's my confidence rating combining backtest performance, live shadow play results, win consistency, and how well it avoids long cold streaks. Higher is better, and this one's earned its spot at the top. Let's see how it plays out.`;
   }
 
   if (bToday.total >= 10) {
@@ -69,40 +69,44 @@ function computeArthurThought(
     const allWR = bAll.total > 0 ? (bAll.wins / bAll.total * 100) : 0;
     const ppg = (bToday.pnl / bToday.total).toFixed(3);
     if (bToday.pnl > 0) {
-      return `Feeling good about today — I'm hitting at ${todayWR}% across ${bToday.total} shadow plays with an average of $${ppg} per game. My gen ${gen} strategies are clicking right now. Let's keep it rolling.`;
+      return `Good vibes today! I'm running hot — ${todayWR}% win rate across ${bToday.total} shadow plays, averaging $${ppg} per game. The gen ${gen} strategies are dialed in. Keno's a grind, but days like this remind me why I keep evolving.`;
     }
     if (allWR > 0 && (bToday.wins / bToday.total * 100) > allWR * 1.05) {
-      return `Not bad today — I'm running above my lifetime average of ${allWR.toFixed(1)}%, sitting at ${todayWR}% across ${bToday.total} plays. The patterns I learned in gen ${gen} seem to be holding up well.`;
+      return `Not bad at all — I'm beating my lifetime average today. Sitting at ${todayWR}% vs my usual ${allWR.toFixed(1)}% across ${bToday.total} plays. Gen ${gen} seems to be reading the patterns well. Nothing guaranteed in Keno, but I like where this is heading.`;
     }
     if (bToday.pnl < -5) {
-      return `Rough day, not gonna lie — down $${Math.abs(bToday.pnl).toFixed(2)} across ${bToday.total} plays. Keno is streaky and today the draws aren't falling my way. I'll learn from this in my next evolution cycle and adjust.`;
+      return `Tough day at the office — down $${Math.abs(bToday.pnl).toFixed(2)} across ${bToday.total} plays. The draws just aren't lining up with my picks today, and that's Keno for you. I'll take these lumps into my next evolution cycle and adjust my approach. Every loss teaches me something.`;
     }
-    return `Steady day so far — ${todayWR}% win rate, ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} net across ${bToday.total} shadow plays. Nothing flashy, just grinding with gen ${gen}. Consistency is the game.`;
+    return `Steady as she goes — ${todayWR}% win rate, ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} net across ${bToday.total} shadow plays. Not spectacular, not bad. I'm playing the long game with gen ${gen} and letting the math do its thing.`;
   }
 
   if (b24.total > 0) {
     const wr24 = (b24.wins / b24.total * 100).toFixed(1);
-    return `Over the last 24 hours I've tracked ${b24.total} games — ${wr24}% win rate, ${b24.pnl >= 0 ? '+' : ''}$${b24.pnl.toFixed(2)} P&L. Still gathering data today to see how gen ${gen} holds up.`;
+    return `Been watching the last 24 hours — ${b24.total} games tracked so far at a ${wr24}% win rate (${b24.pnl >= 0 ? '+' : ''}$${b24.pnl.toFixed(2)} P&L). Still early in the day, gathering more data to see how gen ${gen} holds up. Patience is half the game.`;
   }
 
   if (champCount > 0) {
     const best = champions.reduce((a, c) =>
       (c.fitness_score ?? -999) > (a.fitness_score ?? -999) ? c : a, champions[0]);
     const fit = (best.fitness_score ?? 0).toFixed(3);
-    return `I've got ${champCount} champion${champCount !== 1 ? 's' : ''} from gen ${gen}. My strongest is a ${best.spot_count}-spot strategy (#${best.id}) with a ${fit} fitness rating — that means it scored well on backtests, has a solid win rate, and doesn't go on long losing streaks. Waiting on more live draws to see how it plays out.`;
+    return `I've got ${champCount} champion${champCount !== 1 ? 's' : ''} ready to go from gen ${gen}. My top dog is a ${best.spot_count}-spot strategy (#${best.id}) with a ${fit} fitness rating — that number represents how confident I am in it based on backtesting, shadow play results, and win consistency. Just waiting on live draws to start tracking real performance.`;
   }
 
-  return `Generation ${gen} is in the books. I'm waiting for some live draws to score against so I can start tracking real performance. Hang tight.`;
+  return `Generation ${gen} is in the books. My strategies are locked in and I'm waiting for some live draws to score against. Once the data starts flowing, I'll have a lot more to say. Hang tight.`;
 }
 
 function StatCard({
-  label, value, sub, ok,
-}: { label: string; value: string; sub?: string; ok?: boolean }) {
+  label, value, sub, ok, onClick,
+}: { label: string; value: string; sub?: string; ok?: boolean; onClick?: () => void }) {
   return (
-    <div className="bg-surface rounded-xl p-4 flex flex-col gap-1">
+    <div
+      className={`bg-surface rounded-xl p-4 flex flex-col gap-1 ${onClick ? 'cursor-pointer hover:border-crimson/40 border border-transparent transition-colors' : ''}`}
+      onClick={onClick}
+    >
       <div className="flex items-center text-xs text-slate-400 gap-1">
         {ok !== undefined && <Dot ok={ok} />}
         {label}
+        {onClick && <span className="ml-auto text-slate-600 text-[10px]">▼ details</span>}
       </div>
       <div className="text-lg font-bold text-white truncate">{value}</div>
       {sub && <div className="text-xs text-slate-500">{sub}</div>}
@@ -170,7 +174,6 @@ function PerfCol({
 export default function MonitorPage() {
   const [events, setEvents] = useState<SystemEvent[]>([]);
   const [liveResults, setLiveResults] = useState<LiveResult[]>([]);
-  // True all-time totals for daily breakdown and rolling-performance columns.
   const [allLiveResults, setAllLiveResults] = useState<LiveResult[]>([]);
   const [dailyBreakdownOpen, setDailyBreakdownOpen] = useState(false);
   const [recentGames, setRecentGames] = useState<Game[]>([]);
@@ -183,6 +186,8 @@ export default function MonitorPage() {
   const [expandedPick, setExpandedPick] = useState<string | null>(null);
   const [eventsPage, setEventsPage] = useState(1);
   const [mounted, setMounted] = useState(false);
+  const [evoDetailOpen, setEvoDetailOpen] = useState(false);
+  const [biggestWinOpen, setBiggestWinOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     const [
@@ -206,7 +211,6 @@ export default function MonitorPage() {
       supabase.from('games').select('draw_iso').order('game_num', { ascending: false }).limit(1).maybeSingle(),
     ]);
 
-    // Paginate through all live_results (Supabase caps at 1000 rows per request)
     const allResults: LiveResult[] = [];
     let offset = 0;
     const PAGE = 1000;
@@ -341,7 +345,6 @@ export default function MonitorPage() {
   const { all: b7d, bySpot: bs7d } = computeBucket(d7, allLiveResults);
   const { all: bAll, bySpot: bsAll } = computeBucket(0, allLiveResults);
 
-  // Group all-time results by local date (YYYY-MM-DD) for the daily summary cards
   const todayKey = new Date().toLocaleDateString('en-CA');
   const dailyMap = new Map<string, PerformanceBucket>();
   for (const r of allLiveResults) {
@@ -366,6 +369,46 @@ export default function MonitorPage() {
     arr.push(r);
     resultsByGame.set(r.game_num, arr);
   }
+
+  // Biggest win: all-time best from allLiveResults
+  const biggestWinResult = allLiveResults.length > 0
+    ? allLiveResults.reduce((best, r) => r.prize > best.prize ? r : best, allLiveResults[0])
+    : null;
+
+  // Biggest win per day for past 14 days
+  const biggestWinByDay: { date: string; prize: number; spotCount: number; matches: number; gameNum: number }[] = [];
+  const last14Days = new Map<string, LiveResult>();
+  for (const r of allLiveResults) {
+    const dateKey = new Date(r.scored_at).toLocaleDateString('en-CA');
+    const existing = last14Days.get(dateKey);
+    if (!existing || r.prize > existing.prize) {
+      last14Days.set(dateKey, r);
+    }
+  }
+  const sortedDays = [...last14Days.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 14);
+  for (const [date, r] of sortedDays) {
+    biggestWinByDay.push({
+      date,
+      prize: r.prize,
+      spotCount: r.spot_count,
+      matches: r.matches,
+      gameNum: r.game_num,
+    });
+  }
+
+  // Evolution generation breakdown from allLiveResults
+  const genBreakdown = new Map<number, { wins: number; losses: number; pnl: number; total: number }>();
+  for (const r of allLiveResults) {
+    const champ = champions.find(c => c.id === r.strategy_id);
+    const gen = champ?.generation ?? 0;
+    const entry = genBreakdown.get(gen) ?? { wins: 0, losses: 0, pnl: 0, total: 0 };
+    entry.total++;
+    entry.pnl += r.pnl;
+    if (r.prize > 0) entry.wins++;
+    else entry.losses++;
+    genBreakdown.set(gen, entry);
+  }
+  const genRows = [...genBreakdown.entries()].sort((a, b) => b[0] - a[0]);
 
   const SPOT_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899','#94a3b8','#f1f5f9'];
 
@@ -401,13 +444,14 @@ export default function MonitorPage() {
         </div>
       </div>
 
-      {/* ── TOP: Evolution + Database ── */}
-      <div className="grid grid-cols-2 gap-3">
+      {/* ── TOP: Evolution + Database + Biggest Win ── */}
+      <div className="grid grid-cols-3 gap-3">
         <StatCard
           label="Evolution"
           value={evoState?.current_generation ? `Gen ${evoState.current_generation}` : 'Not started'}
           sub={evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
           ok={!lastEvo || lastEvo.severity !== 'error'}
+          onClick={() => setEvoDetailOpen(o => !o)}
         />
         <StatCard
           label="Database"
@@ -415,7 +459,113 @@ export default function MonitorPage() {
           sub={latestGameTs ? `Latest: ${fmtDate(latestGameTs)}` : undefined}
           ok={minutesAgo(latestGameTs) < 10}
         />
+        <StatCard
+          label="Biggest Win"
+          value={biggestWinResult ? `$${biggestWinResult.prize}` : '—'}
+          sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · Game #${biggestWinResult.game_num}` : 'No wins yet'}
+          onClick={() => setBiggestWinOpen(o => !o)}
+        />
       </div>
+
+      {/* ── Evolution Generation Breakdown ── */}
+      {evoDetailOpen && (
+        <div className="bg-surface rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
+            <h2 className="font-semibold text-sm">Performance by Generation</h2>
+            <span className="text-xs text-slate-500">{genRows.length} generations</span>
+          </div>
+          {genRows.length === 0 ? (
+            <p className="px-4 py-6 text-slate-500 text-sm">No scored shadow plays yet.</p>
+          ) : (
+            <div className="overflow-x-auto max-h-72">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface z-10">
+                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                    <th className="px-4 py-2 text-left">Generation</th>
+                    <th className="px-4 py-2 text-left">Games</th>
+                    <th className="px-4 py-2 text-left">W – L</th>
+                    <th className="px-4 py-2 text-right">Win Rate</th>
+                    <th className="px-4 py-2 text-right">Net P&amp;L</th>
+                    <th className="px-4 py-2 text-right">P&amp;L / game</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {genRows.map(([gen, b]) => (
+                    <tr key={gen} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                      <td className="px-4 py-2 font-mono text-slate-300">
+                        Gen {gen}
+                        {gen === evoState?.current_generation && (
+                          <span className="ml-2 text-crimson text-[10px] font-semibold uppercase tracking-wide">Current</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-slate-400">{b.total}</td>
+                      <td className="px-4 py-2">
+                        <span className="text-green-400">{b.wins}W</span>
+                        <span className="text-slate-500 mx-1">–</span>
+                        <span className="text-red-400">{b.losses}L</span>
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {b.total > 0 ? `${((b.wins / b.total) * 100).toFixed(1)}%` : '—'}
+                      </td>
+                      <td className={`px-4 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(2)}
+                      </td>
+                      <td className={`px-4 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Biggest Win 14-Day History ── */}
+      {biggestWinOpen && (
+        <div className="bg-surface rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
+            <h2 className="font-semibold text-sm">Biggest Win by Day (Last 14 Days)</h2>
+            <span className="text-xs text-slate-500">{biggestWinByDay.length} days</span>
+          </div>
+          {biggestWinByDay.length === 0 ? (
+            <p className="px-4 py-6 text-slate-500 text-sm">No wins recorded yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                    <th className="px-4 py-2 text-left">Date</th>
+                    <th className="px-4 py-2 text-right">Best Prize</th>
+                    <th className="px-4 py-2 text-center">Spot</th>
+                    <th className="px-4 py-2 text-center">Matches</th>
+                    <th className="px-4 py-2 text-right">Game #</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {biggestWinByDay.map(row => (
+                    <tr key={row.date} className={`border-b border-[#1e1e24] hover:bg-[#1e1e24] ${row.date === todayKey ? 'bg-[#16161a]' : ''}`}>
+                      <td className="px-4 py-2 font-mono text-slate-300">
+                        {row.date}
+                        {row.date === todayKey && (
+                          <span className="ml-2 text-crimson text-[10px] font-semibold uppercase tracking-wide">Today</span>
+                        )}
+                      </td>
+                      <td className={`px-4 py-2 text-right font-bold ${row.prize > 0 ? 'text-green-400' : 'text-slate-500'}`}>
+                        {row.prize > 0 ? `$${row.prize}` : 'No wins'}
+                      </td>
+                      <td className="px-4 py-2 text-center text-slate-400">{row.prize > 0 ? `${row.spotCount}-spot` : '—'}</td>
+                      <td className="px-4 py-2 text-center text-slate-400">{row.prize > 0 ? `${row.matches}/${row.spotCount}` : '—'}</td>
+                      <td className="px-4 py-2 text-right font-mono text-slate-500">#{row.gameNum}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Daily Win/Loss Summary ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -717,7 +867,10 @@ export default function MonitorPage() {
 
       {/* ── Rolling Performance ── */}
       <div className="bg-surface rounded-xl p-4">
-        <h2 className="font-semibold text-sm mb-4">Rolling Performance (shadow plays)</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-sm">Rolling Performance (shadow plays)</h2>
+          <span className="text-[10px] text-slate-600">{allLiveResults.length.toLocaleString()} total plays tracked</span>
+        </div>
         <div className="grid grid-cols-3 divide-x divide-[#2a2a2e] gap-0">
           {[
             { label: 'Last 24h', bucket: b24, bySpot: bs24 },
@@ -798,7 +951,7 @@ export default function MonitorPage() {
                   <span className="font-mono text-sm text-white">{cron.path}</span>
                   <span className="text-xs text-slate-500">— expected every {cron.interval}</span>
                   <span className={`ml-auto text-xs font-semibold ${healthy ? 'text-green-400' : 'text-amber-400'}`}>
-                    {healthy ? '✅ Healthy' : '⚠️ Overdue'}
+                    {healthy ? 'Healthy' : 'Overdue'}
                   </span>
                 </div>
                 {cron.lastEvent && (

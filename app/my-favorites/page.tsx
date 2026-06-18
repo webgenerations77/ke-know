@@ -66,12 +66,19 @@ export default function MyFavoritesPage() {
     bonusType: 'none', draws: 1, wagerAmount: 1,
   });
 
+  const [tableError, setTableError] = useState(false);
+
   const loadFavorites = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('favorites')
       .select('*')
       .order('created_at', { ascending: true })
       .limit(4);
+    if (error) {
+      console.error('favorites table error:', error.message);
+      setTableError(true);
+      return;
+    }
     setFavorites((data ?? []) as Favorite[]);
   }, []);
 
@@ -190,6 +197,21 @@ export default function MyFavoritesPage() {
   }
 
   if (loading) return <div className="text-slate-500 pt-8">Loading...</div>;
+
+  if (tableError) {
+    return (
+      <div className="space-y-6 max-w-4xl">
+        <h1 className="text-2xl font-bold">My Favorites</h1>
+        <div className="bg-surface rounded-xl p-8 text-center border border-red-500/30">
+          <p className="text-red-400 font-semibold mb-2">Favorites table not found</p>
+          <p className="text-sm text-slate-500 mb-4">
+            The favorites table needs to be created in your Supabase database.
+            Run the migration in <span className="font-mono text-slate-400">supabase/migrations/004_favorites.sql</span> to set it up.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

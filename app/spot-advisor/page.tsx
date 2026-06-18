@@ -64,32 +64,36 @@ function summarizeChampion(rec: Recommendation): string {
   const streak = rec.evoChampion?.result?.max_losing_streak;
   const genome = rec.evoChampion?.strategy.genome as unknown as StrategyGenome | undefined;
 
-  const parts: string[] = [];
+  if (wr == null && ppg == null) return "Arthur's top pick for this spot count — still gathering data.";
 
-  if (wr != null && wr > 0) {
-    const pct = (wr * 100).toFixed(0);
-    parts.push(`Wins about ${pct}% of the time in backtesting`);
+  const wrPct = wr != null ? (wr * 100) : 0;
+
+  let summary = '';
+  if (wrPct >= 30) {
+    summary = `This one hits pretty often — about ${wrPct.toFixed(0)}% of games pay out.`;
+  } else if (wrPct >= 15) {
+    summary = `Wins roughly 1 in ${Math.round(100 / wrPct)} games, which is solid for ${rec.spots}-spot.`;
+  } else if (wrPct > 0) {
+    summary = `It's a long-shot play — wins are rare but the payouts make up for it.`;
   }
 
-  if (ppg != null) {
-    if (ppg > 0) parts.push(`averages +$${ppg.toFixed(3)} per game`);
-    else parts.push(`averages $${ppg.toFixed(3)} per game`);
+  if (ppg != null && ppg > 0) {
+    summary += ` Historically comes out ahead over a full session.`;
+  } else if (ppg != null) {
+    summary += ` Still refining — the math is close to breaking even.`;
   }
 
-  if (streak != null && streak > 0) {
-    parts.push(`longest cold streak was ${streak} games`);
+  if (streak != null && streak > 10) {
+    summary += ` Can go cold for ${streak}+ games, so give it room to run.`;
   }
 
   if (genome?.bonus_type === 'bonus') {
-    parts.push('plays with Bonus for extra upside');
+    summary += ` Plays with Bonus for extra upside on wins.`;
   } else if (genome?.bonus_type === 'super_bonus') {
-    parts.push('plays Super Bonus for max multiplier');
+    summary += ` Uses Super Bonus to chase bigger multipliers.`;
   }
 
-  if (parts.length === 0) return 'Arthur\'s top-ranked strategy for this spot count.';
-
-  return parts[0].charAt(0).toUpperCase() + parts[0].slice(1) +
-    (parts.length > 1 ? ', ' + parts.slice(1).join(', ') : '') + '.';
+  return summary.trim();
 }
 
 function Ball({ n }: { n: number }) {

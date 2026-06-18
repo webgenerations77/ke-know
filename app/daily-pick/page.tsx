@@ -327,38 +327,55 @@ export default function DailyPickPage() {
 
       {/* Expected outcome */}
       <div className="bg-surface rounded-xl p-5 space-y-4">
-        <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">Backtested Average</p>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <p className="text-xs text-slate-600 mb-1">Per Game (avg)</p>
-            <p className={`text-3xl font-bold ${ppg >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {ppg >= 0 ? '+' : ''}{ppg.toFixed(2)}
+        <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">Backtested Long-Run Average</p>
+
+        {pick.reasoning?.win_rate != null && (
+          <div className="rounded-lg bg-[#0e0e10] px-4 py-3 border border-[#1e1e24]">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-slate-400">Win Rate</span>
+              <span className="text-lg font-bold text-white">{((pick.reasoning.win_rate) * 100).toFixed(1)}%</span>
+            </div>
+            <div className="w-full bg-[#1e1e24] rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-crimson h-full rounded-full"
+                style={{ width: `${Math.min(100, pick.reasoning.win_rate * 100)}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-slate-600 mt-1.5">
+              Roughly {Math.round(1 / pick.reasoning.win_rate)} games between wins on average.
+              {pick.reasoning.max_losing_streak != null && ` Worst cold streak in testing: ${pick.reasoning.max_losing_streak} games.`}
             </p>
           </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <p className="text-xs text-slate-600 mb-1">Full Session ({pick.recommended_games} games)</p>
-            <p className={`text-3xl font-bold ${total >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {total >= 0 ? '+' : ''}{total.toFixed(2)}
+            <p className="text-xs text-slate-600 mb-1">Long-Run Avg Per Game</p>
+            <p className={`text-2xl font-bold ${ppg >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {ppg >= 0 ? '+' : ''}${ppg.toFixed(3)}
             </p>
+            <p className="text-[10px] text-slate-700 mt-0.5">includes rare big wins</p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-600 mb-1">Projected Session ({pick.recommended_games} games)</p>
+            <p className={`text-2xl font-bold ${total >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {total >= 0 ? '+' : ''}${total.toFixed(2)}
+            </p>
+            <p className="text-[10px] text-slate-700 mt-0.5">theoretical, not guaranteed</p>
           </div>
         </div>
         {pick.reasoning && (
           <div className="space-y-2 pt-2 border-t border-[#1e1e24]">
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-600">
               {pick.reasoning.shadow_plays !== undefined && (
-                <span>{pick.reasoning.shadow_plays} shadow plays</span>
-              )}
-              {pick.reasoning.win_rate !== undefined && (
-                <span>{((pick.reasoning.win_rate) * 100).toFixed(0)}% historical win rate</span>
-              )}
-              {pick.reasoning.max_losing_streak !== undefined && (
-                <span>Max losing streak: {pick.reasoning.max_losing_streak}</span>
+                <span>{pick.reasoning.shadow_plays} shadow plays analyzed</span>
               )}
             </div>
             <p className="text-[10px] text-slate-700 leading-relaxed">
-              This average includes rare big wins that pull the number up. Most individual games
-              won't hit — a {pick.reasoning.win_rate != null ? `${((pick.reasoning.win_rate) * 100).toFixed(0)}% win rate means roughly ${Math.round((1 - pick.reasoning.win_rate) * 100)}% of games are losses` : 'majority of games are losses'}.
-              The strategy aims to come out ahead over a full session, not on every single draw.
+              These numbers are long-run averages from backtesting against thousands of real draws.
+              A small positive average means the strategy expects to come out slightly ahead over many sessions,
+              but most individual games will be losses. The rare bigger wins are what pull the average up.
+              Think of it like a batting average — the stat only tells the story over hundreds of at-bats.
             </p>
           </div>
         )}
@@ -371,8 +388,10 @@ export default function DailyPickPage() {
         const totalWins = scored.reduce((s, h) => s + h.wins, 0);
         const totalPnl = scored.reduce((s, h) => s + h.total_pnl, 0);
         const winningDays = scored.filter(h => h.total_pnl > 0).length;
+        const winRate = totalGames > 0 ? ((totalWins / totalGames) * 100).toFixed(1) : '0.0';
+        const ppg = totalGames > 0 ? (totalPnl / totalGames) : 0;
         return (
-          <div className="bg-surface rounded-xl overflow-hidden">
+          <div className="bg-surface rounded-xl overflow-hidden border border-[#2a2a2e]">
             <button
               type="button"
               onClick={() => setHistoryOpen(o => !o)}
@@ -393,6 +412,11 @@ export default function DailyPickPage() {
                     {scored.length} days · {winningDays} profitable
                   </span>
                 </div>
+                <div className="flex gap-4 mt-1.5 text-[10px] text-slate-600">
+                  <span>{winRate}% win rate</span>
+                  <span>{ppg >= 0 ? '+' : ''}${ppg.toFixed(3)}/game avg</span>
+                  <span>{totalGames} total games tracked</span>
+                </div>
               </div>
               <span className="text-slate-600">{historyOpen ? '▲' : '▼'}</span>
             </button>
@@ -404,7 +428,9 @@ export default function DailyPickPage() {
                     <tr className="text-slate-500 border-b border-[#2a2a2e]">
                       <th className="px-4 py-2 text-left">Date</th>
                       <th className="px-4 py-2 text-left">Play</th>
+                      <th className="px-4 py-2 text-left">Numbers</th>
                       <th className="px-4 py-2 text-left">W–L</th>
+                      <th className="px-4 py-2 text-right">Win Rate</th>
                       <th className="px-4 py-2 text-right">P&L</th>
                       <th className="px-4 py-2 text-right">Best Win</th>
                     </tr>
@@ -415,6 +441,15 @@ export default function DailyPickPage() {
                         <td className="px-4 py-2 font-mono text-slate-300">{h.pick_date}</td>
                         <td className="px-4 py-2 text-slate-400">{h.spot_count}-spot</td>
                         <td className="px-4 py-2">
+                          <div className="flex flex-wrap gap-0.5">
+                            {h.picks.slice(0, h.spot_count).sort((a, b) => a - b).map(n => (
+                              <span key={n} className="w-5 h-5 rounded-full bg-crimson/20 border border-crimson/40 text-crimson text-[9px] font-bold flex items-center justify-center">
+                                {n}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2">
                           {h.games_scored > 0 ? (
                             <>
                               <span className="text-green-400">{h.wins}W</span>
@@ -424,6 +459,9 @@ export default function DailyPickPage() {
                           ) : (
                             <span className="text-slate-600">no data</span>
                           )}
+                        </td>
+                        <td className="px-4 py-2 text-right text-slate-400">
+                          {h.games_scored > 0 ? `${((h.wins / h.games_scored) * 100).toFixed(0)}%` : '—'}
                         </td>
                         <td className={`px-4 py-2 text-right font-mono ${h.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                           {h.games_scored > 0 ? `${h.total_pnl >= 0 ? '+' : ''}$${h.total_pnl.toFixed(2)}` : '—'}

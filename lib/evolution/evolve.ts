@@ -254,7 +254,20 @@ export async function runEvolution(): Promise<{
         (liveStats?.get(candidate.strategy.id)?.count ?? 0) < 10 ||
         (liveStats?.get(candidate.strategy.id)?.total_pnl ?? 0) >= 0;
 
-      if (candTestPpg > 0 && candLiveOk) {
+      // Allow promotion if: (a) positive test PPG and live OK, or
+      // (b) higher fitness by 10%+ and better test PPG than current champ
+      const { data: champResult } = currentChampion
+        ? await db.from('strategy_results')
+            .select('test_pnl_per_game')
+            .eq('strategy_id', currentChampion.id)
+            .order('evaluated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : { data: null };
+      const champTestPpg = champResult?.test_pnl_per_game ?? -999;
+      const betterThanChamp = candTestPpg > champTestPpg && candidate.fitness > champFitness * 1.1;
+
+      if ((candTestPpg > 0 && candLiveOk) || betterThanChamp) {
         if (currentChampion) {
           await db.from('strategies').update({ status: 'active' }).eq('id', currentChampion.id);
         }
