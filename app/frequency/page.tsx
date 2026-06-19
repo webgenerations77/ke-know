@@ -75,9 +75,9 @@ export default function FrequencyPage() {
       </p>
 
       <div className="bg-surface rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
           <table className="w-full text-sm">
-            <thead>
+            <thead className="sticky top-0 bg-surface z-10">
               <tr className="border-b border-[#2a2a2e] text-xs">
                 <ColHeader k="rank" label="Rank" />
                 <ColHeader k="number" label="Number" />

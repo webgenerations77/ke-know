@@ -3,6 +3,7 @@ import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
 import { runEvolution } from '@/lib/evolution/evolve';
 import { scorePendingPredictions } from '@/lib/score-predictions';
 import { replayChampions } from '@/lib/replay';
+import { notifyEvolution } from '@/lib/notify';
 
 export interface SyncResult {
   gamesAdded: number;
@@ -111,6 +112,9 @@ export async function performSync(db: ReturnType<typeof createServiceClient>): P
       const result = await runEvolution();
       evolutionRan = true;
       evolutionResult = result;
+      if (result.promotions > 0) {
+        await notifyEvolution(result.generation, result.promotions).catch(() => {});
+      }
     } catch (evoErr) {
       const msg = evoErr instanceof Error ? evoErr.message : String(evoErr);
       console.error('[sync/evolution]', msg);

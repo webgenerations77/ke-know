@@ -46,9 +46,11 @@ Key constraint: promotion requires positive test PnL/game OR 10%+ higher fitness
 
 ### Cron System
 
-- `/api/poll` — POST with Bearer auth, called every ~4 min by external cron (cron-job.org). Catches up on missed games, scores predictions, commits new ones. Always returns 200.
-- `/api/sync` — GET (Vercel cron) or POST (external cron). Daily backfill + one evolution generation.
-- `/api/daily-pick` — GET (Vercel cron). Selects highest-fitness champion, generates picks, finds best hour from live data.
+- `/api/poll` — POST with Bearer auth, called every ~4 min by external cron (cron-job.org). Catches up on missed games, scores predictions, notifies on big wins, commits new ones. Always returns 200.
+- `/api/sync` — GET (Vercel cron) or POST (external cron). Daily backfill + score predictions + replay champions against missed games + one evolution generation. Notifies on new champion promotions.
+- `/api/daily-pick` — GET (Vercel cron). Selects highest-fitness champion, generates picks, finds best hour from live data. Sends push notification with today's pick.
+- `/api/simulate` — POST with Bearer auth or x-internal header. Triggers `replayChampions()` to replay promoted strategies against historical games they haven't been scored on. Runs automatically during sync but can be triggered manually from Simulator UI.
+- `/api/notify-window` — POST with Bearer auth. Checks if the current ET hour matches today's best play window and sends a push notification. Set up a cron to call this every hour.
 - `/api/sync-manual` — POST, no auth. Browser-triggered sync.
 - `/api/evolve` — POST. On-demand evolution trigger.
 
@@ -74,6 +76,8 @@ Arthur is a stateless AI personality on the Live Monitor page. His thought engin
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client + Server | Supabase anon/public key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server only | Bypasses RLS, used in all API routes |
 | `CRON_SECRET` | Server only | Bearer token for poll/sync endpoints |
+| `NTFY_TOPIC` | Server only | ntfy.sh topic name for push notifications (e.g. `keknow-alerts`) |
+| `NTFY_URL` | Server only | Optional ntfy server URL (defaults to `https://ntfy.sh`) |
 
 ## Conventions
 
@@ -91,11 +95,20 @@ Arthur is a stateless AI personality on the Live Monitor page. His thought engin
 - `/monitor` — Live Monitor with Arthur, time filter (today/week/month/all), win/loss, live feed
 - `/daily-pick` — Arthur's daily recommended play
 - `/spot-advisor` — Spot count recommendations
-- `/my-picks` — Custom pick generator
-- `/my-favorites` — Favorite game tracker
-- `/prediction-portal` — AI prediction engine
-- `/learning-center` — Live/backtest simulator
+- `/learning-center` — Simulator: live sessions + historical backtests using champion strategies. Results feed into `live_results` for fitness scoring. Auto-replay runs during sync.
 - `/number-cloud`, `/frequency`, `/pair-patterns`, `/draw-history` — Data exploration
+
+### Simulator & Replay System (`lib/replay.ts`)
+
+The replay engine (`replayChampions()`) retroactively scores promoted champion strategies against historical games they haven't been scored on. This feeds the fitness function's live performance component (30% weight). Key constraint: picks for game N only use games 1..N-1 as context (no look-ahead). Capped at 500 new results per sync run. Unique index on `live_results(strategy_id, game_num)` prevents duplicates.
+
+### Push Notifications (`lib/notify.ts`)
+
+Uses ntfy.sh for push notifications. Set `NTFY_TOPIC` env var and install the ntfy app on your phone. Notifications fire for:
+- Daily pick generated (with numbers + best play window)
+- Play window opening (via `/api/notify-window` hourly cron)
+- Big wins ($10+) detected during poll scoring
+- New champion promotions after evolution
 
 **Admin pages** (`/admin/*` route with dedicated layout):
 - `/admin/strategy-lab` — Evolution engine dashboard, genome explorer

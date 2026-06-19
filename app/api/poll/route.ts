@@ -5,6 +5,7 @@ import { generatePicks } from '@/lib/evolution/fitness';
 import { scorePendingPredictions } from '@/lib/score-predictions';
 import type { StrategyGenome } from '@/lib/evolution/genome';
 import type { Game } from '@/lib/supabase';
+import { notifyBigWin } from '@/lib/notify';
 
 export const maxDuration = 30;
 
@@ -81,6 +82,22 @@ export async function POST(req: NextRequest) {
     // exists — covers games inserted just now by this poll *and* any
     // inserted earlier by sync's backfill that never got scored.
     const scoredCount = await scorePendingPredictions(db);
+
+    // 4b. Notify on big wins (prize >= $10) from just-scored predictions
+    if (scoredCount > 0) {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: bigWins } = await db
+        .from('live_results')
+        .select('prize, spot_count, matches')
+        .gte('prize', 10)
+        .gte('scored_at', fiveMinAgo)
+        .order('prize', { ascending: false })
+        .limit(1);
+      if (bigWins?.[0]) {
+        const bw = bigWins[0];
+        await notifyBigWin(bw.prize as number, bw.spot_count as number, bw.matches as number).catch(() => {});
+      }
+    }
 
     // 5. Commit predictions for the game right after the true current max
     const { data: maxAfterRow } = await db

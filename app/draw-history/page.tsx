@@ -121,9 +121,9 @@ export default function DrawHistoryPage() {
       </div>
 
       <div className="bg-surface rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
           <table className="w-full text-xs">
-            <thead>
+            <thead className="sticky top-0 bg-surface z-10">
               <tr className="text-slate-500 border-b border-[#2a2a2e]">
                 <th className="px-3 py-3 text-left">Game #</th>
                 <th className="px-3 py-3 text-left">Date</th>

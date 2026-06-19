@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server';
 import { generatePicks } from '@/lib/evolution/fitness';
 import type { StrategyGenome } from '@/lib/evolution/genome';
 import type { Game } from '@/lib/supabase';
+import { notifyDailyPick } from '@/lib/notify';
 
 export const maxDuration = 60;
 
@@ -181,6 +182,14 @@ export async function GET() {
     .select('*')
     .eq('pick_date', today)
     .maybeSingle();
+
+  if (freshPick) {
+    await notifyDailyPick(
+      freshPick.spot_count as number,
+      freshPick.picks as number[],
+      freshPick.best_hour as number | null,
+    ).catch(() => {});
+  }
 
   return NextResponse.json({ ok: true, pick: freshPick ?? null });
 }
