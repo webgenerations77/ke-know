@@ -152,11 +152,11 @@ function computeMood(
     const mins = lastRunAt ? (Date.now() - new Date(lastRunAt).getTime()) / 60000 : 9999;
     return mins < 60 ? 'focused' : 'curious';
   }
-  const winRate = todayWins / todayTotal;
-  if (todayPnl > 5 && winRate > 0.35) return 'optimistic';
-  if (todayPnl >= 0) return 'focused';
-  if (todayPnl < -10 || winRate < 0.15) return 'frustrated';
-  return 'cautious';
+  // Align with Monitor's mood thresholds (fire/good/steady/down/waiting)
+  if (todayPnl > 2) return 'optimistic';  // matches Monitor 'fire'/'good'
+  if (todayPnl >= -1) return 'focused';    // matches Monitor 'steady'
+  if (todayPnl >= -5) return 'cautious';   // matches Monitor 'steady' (slightly negative)
+  return 'frustrated';                      // matches Monitor 'down'
 }
 
 export default function SplashPage() {

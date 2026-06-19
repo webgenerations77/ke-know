@@ -983,7 +983,7 @@ export default function MonitorPage() {
       <StatCard
         label="Biggest Win"
         value={biggestWinResult ? `$${biggestWinResult.prize}` : '—'}
-        sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · Game #${biggestWinResult.game_num}` : 'No wins yet'}
+        sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · ${new Date(biggestWinResult.scored_at).toLocaleDateString()}` : 'No wins yet'}
         onClick={() => setBiggestWinOpen(o => !o)}
       />
 
