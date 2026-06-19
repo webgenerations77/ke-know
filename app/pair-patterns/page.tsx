@@ -207,9 +207,9 @@ export default function PairPatternsPage() {
           Any pair is expected together ~{expectedStr} times in {games.length.toLocaleString()} draws.
           Score above 1.0 means they appear together more than chance. Click a number to explore it.
         </p>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
           <table className="w-full text-sm">
-            <thead>
+            <thead className="sticky top-0 bg-surface z-10">
               <tr className="text-xs text-slate-500 border-b border-[#2a2a2e]">
                 <th className="px-3 py-2 text-left">#</th>
                 <th className="px-3 py-2 text-left">Pair</th>

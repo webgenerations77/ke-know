@@ -314,61 +314,7 @@ export default function DailyPickPage() {
         </div>
       )}
 
-      {/* Expected outcome */}
-      <div className="bg-surface rounded-xl p-5 space-y-4">
-        <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">Backtested Long-Run Average</p>
-
-        {pick.reasoning?.win_rate != null && (
-          <div className="rounded-lg bg-[#0e0e10] px-4 py-3 border border-[#1e1e24]">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-slate-400">Win Rate</span>
-              <span className="text-lg font-bold text-white">{((pick.reasoning.win_rate) * 100).toFixed(1)}%</span>
-            </div>
-            <div className="w-full bg-[#1e1e24] rounded-full h-2 overflow-hidden">
-              <div
-                className="bg-crimson h-full rounded-full"
-                style={{ width: `${Math.min(100, pick.reasoning.win_rate * 100)}%` }}
-              />
-            </div>
-            <p className="text-[10px] text-slate-600 mt-1.5">
-              Roughly {Math.round(1 / pick.reasoning.win_rate)} games between wins on average.
-              {pick.reasoning.max_losing_streak != null && ` Worst cold streak in testing: ${pick.reasoning.max_losing_streak} games.`}
-            </p>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          <div className="flex sm:block items-center justify-between">
-            <p className="text-xs text-slate-600 sm:mb-1">Long-Run Avg Per Game</p>
-            <p className={`text-xl sm:text-2xl font-bold ${ppg >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {ppg >= 0 ? '+' : ''}${ppg.toFixed(3)}
-            </p>
-          </div>
-          <div className="flex sm:block items-center justify-between">
-            <p className="text-xs text-slate-600 sm:mb-1">Projected Session ({pick.recommended_games}g)</p>
-            <p className={`text-xl sm:text-2xl font-bold ${total >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {total >= 0 ? '+' : ''}${total.toFixed(2)}
-            </p>
-          </div>
-        </div>
-        {pick.reasoning && (
-          <div className="space-y-2 pt-2 border-t border-[#1e1e24]">
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-600">
-              {pick.reasoning.shadow_plays !== undefined && (
-                <span>{pick.reasoning.shadow_plays} shadow plays analyzed</span>
-              )}
-            </div>
-            <p className="text-[10px] text-slate-700 leading-relaxed">
-              These numbers are long-run averages from backtesting against thousands of real draws.
-              A small positive average means the strategy expects to come out slightly ahead over many sessions,
-              but most individual games will be losses. The rare bigger wins are what pull the average up.
-              Think of it like a batting average — the stat only tells the story over hundreds of at-bats.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Performance History */}
+      {/* Performance History (moved above Expected Outcome) */}
       {history.length > 0 && (() => {
         const scored = history.filter(h => h.games_scored > 0);
         const totalGames = scored.reduce((s, h) => s + h.games_scored, 0);
@@ -461,6 +407,60 @@ export default function DailyPickPage() {
           </div>
         );
       })()}
+
+      {/* Expected outcome */}
+      <div className="bg-surface rounded-xl p-5 space-y-4">
+        <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">Backtested Long-Run Average</p>
+
+        {pick.reasoning?.win_rate != null && (
+          <div className="rounded-lg bg-[#0e0e10] px-4 py-3 border border-[#1e1e24]">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-slate-400">Win Rate</span>
+              <span className="text-lg font-bold text-white">{((pick.reasoning.win_rate) * 100).toFixed(1)}%</span>
+            </div>
+            <div className="w-full bg-[#1e1e24] rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-crimson h-full rounded-full"
+                style={{ width: `${Math.min(100, pick.reasoning.win_rate * 100)}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-slate-600 mt-1.5">
+              Roughly {Math.round(1 / pick.reasoning.win_rate)} games between wins on average.
+              {pick.reasoning.max_losing_streak != null && ` Worst cold streak in testing: ${pick.reasoning.max_losing_streak} games.`}
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <div className="flex sm:block items-center justify-between">
+            <p className="text-xs text-slate-600 sm:mb-1">Long-Run Avg Per Game</p>
+            <p className={`text-xl sm:text-2xl font-bold ${ppg >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {ppg >= 0 ? '+' : ''}${ppg.toFixed(3)}
+            </p>
+          </div>
+          <div className="flex sm:block items-center justify-between">
+            <p className="text-xs text-slate-600 sm:mb-1">Projected Session ({pick.recommended_games}g)</p>
+            <p className={`text-xl sm:text-2xl font-bold ${total >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {total >= 0 ? '+' : ''}${total.toFixed(2)}
+            </p>
+          </div>
+        </div>
+        {pick.reasoning && (
+          <div className="space-y-2 pt-2 border-t border-[#1e1e24]">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-600">
+              {pick.reasoning.shadow_plays !== undefined && (
+                <span>{pick.reasoning.shadow_plays} shadow plays analyzed</span>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-700 leading-relaxed">
+              These numbers are long-run averages from backtesting against thousands of real draws.
+              A small positive average means the strategy expects to come out slightly ahead over many sessions,
+              but most individual games will be losses. The rare bigger wins are what pull the average up.
+              Think of it like a batting average — the stat only tells the story over hundreds of at-bats.
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* Navigation links */}
       <div className="flex gap-3">

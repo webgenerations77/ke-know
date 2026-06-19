@@ -347,37 +347,6 @@ export default function SpotAdvisorPage() {
         </p>
       </div>
 
-      {/* Controls */}
-      <div className="bg-surface rounded-xl p-4 flex flex-wrap gap-5 items-center">
-        <div>
-          <label className="text-xs text-slate-400 block mb-1">Wager per game ($1–$20)</label>
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={wager}
-            onChange={e => setWager(Math.min(20, Math.max(1, parseInt(e.target.value) || 1)))}
-            className="w-20 px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none focus:border-crimson"
-          />
-        </div>
-        <div>
-          <label className="text-xs text-slate-400 block mb-1">Wager Type</label>
-          <div className="flex gap-2">
-            {(['classic', 'pktg'] as const).map(t => (
-              <button
-                key={t}
-                onClick={() => setWagerType(t)}
-                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                  wagerType === t ? 'bg-crimson text-white' : 'bg-[#0e0e10] text-slate-400 hover:text-white border border-[#333]'
-                }`}
-              >
-                {t === 'classic' ? 'Classic' : 'PKTG (¼ prizes)'}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
       {/* Spot comparison table */}
       <div className="bg-surface rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
@@ -425,67 +394,6 @@ export default function SpotAdvisorPage() {
         </div>
       </div>
 
-      {/* Bonus advisor */}
-      <div className="bg-surface rounded-xl p-5 space-y-4">
-        <h2 className="font-semibold">Bonus / Super Bonus Advisor</h2>
-        <p className="text-xs text-slate-500 mb-2">
-          Using {dbBonusDist.length >= 2 ? 'actual DB multiplier frequencies' : 'theoretical multiplier distribution'}.
-          Based on {bestSpots}-spot picks at ${wager} wager.
-        </p>
-
-        <div className="grid grid-cols-3 gap-4">
-          {[
-            {
-              label: 'Base',
-              cost: `$${wager}`,
-              ev: baseRatio * wager,
-              evRatio: baseRatio,
-              desc: `E[return] = ${(baseEv * 100).toFixed(1)}¢ per $1`,
-            },
-            {
-              label: 'Bonus',
-              cost: `$${wager * 2}`,
-              ev: bonusRatio * wager,
-              evRatio: bonusRatio,
-              desc: `E[mult] = ${bonusMultFromDb.toFixed(2)}×, E[return] per $1 = ${(bonusRatio * 100).toFixed(1)}¢`,
-            },
-            {
-              label: 'Super Bonus',
-              cost: `$${wager * 3}`,
-              ev: superRatio * wager,
-              evRatio: superRatio,
-              desc: `E[mult] = ${superMultFromDb.toFixed(2)}×, E[return] per $1 = ${(superRatio * 100).toFixed(1)}¢`,
-            },
-          ].map(({ label, cost, ev, evRatio, desc }) => (
-            <div
-              key={label}
-              className={`rounded-xl p-4 border ${
-                label === bestBonus
-                  ? 'border-crimson bg-crimson/10'
-                  : 'border-[#2a2a2e] bg-[#0e0e10]'
-              }`}
-            >
-              <div className="text-xs text-slate-400">{label}</div>
-              <div className="text-lg font-bold text-white mt-1">{cost} cost</div>
-              <div className="text-green-400 font-mono text-sm mt-1">
-                {ev.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })} expected
-              </div>
-              <div className="text-xs text-slate-500 mt-2">{desc}</div>
-              {label === bestBonus && (
-                <span className="mt-2 inline-block px-2 py-0.5 rounded-full bg-crimson text-white text-xs">
-                  Best EV/$
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <p className="text-xs text-slate-500 mt-2">
-          Bonus costs 2× your wager; Super Bonus costs 3×. Both multiply your prize winnings by a drawn multiplier.
-          Super Bonus guarantees at least 2× and has a higher expected multiplier. Return ratios above assume you win
-          and apply the average multiplier — the actual multiplier for any single game is random.
-        </p>
-      </div>
     </div>
   );
 }

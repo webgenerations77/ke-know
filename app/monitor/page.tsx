@@ -459,6 +459,8 @@ export default function MonitorPage() {
   const [stratGenMap, setStratGenMap] = useState<Map<number, number>>(new Map());
   const [timeFilter, setTimeFilter] = useState<'today' | 'week' | 'month' | 'all'>('today');
   const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [rollingPerfOpen, setRollingPerfOpen] = useState(false);
+  const [cronHealthOpen, setCronHealthOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     const [
@@ -1049,12 +1051,12 @@ export default function MonitorPage() {
             );
           })()}
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
           {recentGames.length === 0 ? (
             <p className="px-4 py-6 text-slate-500 text-sm">No games yet.</p>
           ) : (
             <table className="w-full text-xs">
-              <thead>
+              <thead className="sticky top-0 bg-surface z-10">
                 <tr className="text-slate-500 border-b border-[#2a2a2e]">
                   <th className="px-3 py-2 text-left">Game</th>
                   <th className="px-3 py-2 text-left">Date</th>
@@ -1069,7 +1071,7 @@ export default function MonitorPage() {
                 </tr>
               </thead>
               <tbody>
-                {recentGames.map(game => {
+                {recentGames.slice(0, 10).map(game => {
                   const gameResults = resultsByGame.get(game.game_num) ?? [];
                   const bySpot = new Map(gameResults.map(r => [r.spot_count, r]));
                   return (
@@ -1214,14 +1216,69 @@ export default function MonitorPage() {
         </div>
       </div>
 
-      {/* ── Rolling Performance (filtered) ── */}
-      <div className="bg-surface rounded-xl p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-sm">{filterLabel} Performance</h2>
-          <span className="text-[10px] text-slate-600">{filteredBucket.total.toLocaleString()} plays</span>
-        </div>
-        <PerfCol label={filterLabel} bucket={filteredBucket} bySpot={filteredBySpot} />
+      {/* ── Rolling Performance (collapsed) ── */}
+      <div className="bg-surface rounded-xl overflow-hidden">
+        <button
+          onClick={() => setRollingPerfOpen(o => !o)}
+          className="w-full px-4 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <h2 className="font-semibold text-sm">{filterLabel} Performance</h2>
+            <span className="text-xs text-slate-500">
+              {filteredBucket.total} plays · {filteredBucket.total > 0 ? ((filteredBucket.wins / filteredBucket.total) * 100).toFixed(1) : '0'}% wins ·{' '}
+              <span className={filteredBucket.pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                {filteredBucket.pnl >= 0 ? '+' : ''}${filteredBucket.pnl.toFixed(2)}
+              </span>
+            </span>
+          </div>
+          <span className="text-slate-600 text-xs">{rollingPerfOpen ? '▲' : '▼'}</span>
+        </button>
+        {rollingPerfOpen && (
+          <div className="px-4 pb-4 border-t border-[#2a2a2e] pt-3">
+            <PerfCol label={filterLabel} bucket={filteredBucket} bySpot={filteredBySpot} />
+          </div>
+        )}
       </div>
+
+      {/* ── Cron Health (compact) ── */}
+      {(() => {
+        const pollOk = minutesAgo(lastPoll?.occurred_at) < 6;
+        const syncOk = minutesAgo(lastSync?.occurred_at) < 65;
+        const allOk = pollOk && syncOk;
+        return (
+          <div className="bg-surface rounded-xl overflow-hidden">
+            <button
+              onClick={() => setCronHealthOpen(o => !o)}
+              className="w-full px-4 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className={`inline-block w-2.5 h-2.5 rounded-full ${allOk ? 'bg-green-400' : 'bg-amber-400'}`} />
+                <h2 className="font-semibold text-sm">System Health</h2>
+                <span className="text-xs text-slate-500">{allOk ? 'All systems go' : 'Attention needed'}</span>
+              </div>
+              <span className="text-slate-600 text-xs">{cronHealthOpen ? '▲' : '▼'}</span>
+            </button>
+            {cronHealthOpen && (
+              <div className="px-4 pb-4 border-t border-[#2a2a2e] pt-3 space-y-2">
+                <div className="flex items-center gap-2 text-xs">
+                  <Dot ok={pollOk} />
+                  <span className="text-slate-400">Poll (every 4 min)</span>
+                  <span className="ml-auto text-slate-500 font-mono">
+                    {lastPoll ? `${minutesAgo(lastPoll.occurred_at).toFixed(0)}m ago` : 'never'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <Dot ok={syncOk} />
+                  <span className="text-slate-400">Sync (hourly)</span>
+                  <span className="ml-auto text-slate-500 font-mono">
+                    {lastSync ? `${minutesAgo(lastSync.occurred_at).toFixed(0)}m ago` : 'never'}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Activity Log (collapsed) ── */}
       <div className="bg-surface rounded-xl overflow-hidden">
