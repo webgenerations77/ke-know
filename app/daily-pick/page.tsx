@@ -274,53 +274,42 @@ export default function DailyPickPage() {
       </div>
 
       {/* Session plan */}
-      <div className="bg-surface rounded-xl p-5 grid grid-cols-3 gap-4">
-        <div>
-          <p className="text-xs text-slate-500 mb-1">Wager / Game</p>
-          <p className="text-2xl font-bold">${Number(pick.wager_per_game).toFixed(2)}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">
-            {pick.bonus_type !== 'none' ? `includes ${bonusLabel.toLowerCase()}` : 'base wager'}
-          </p>
+      <div className="bg-surface rounded-xl p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <div className="flex sm:block items-center justify-between">
+          <p className="text-xs text-slate-500 sm:mb-1">Wager / Game</p>
+          <p className="text-xl sm:text-2xl font-bold">${Number(pick.wager_per_game).toFixed(2)}</p>
         </div>
-        <div>
-          <p className="text-xs text-slate-500 mb-1">Games to Play</p>
-          <p className="text-2xl font-bold">{pick.recommended_games}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">recommended session</p>
+        <div className="flex sm:block items-center justify-between">
+          <p className="text-xs text-slate-500 sm:mb-1">Games to Play</p>
+          <p className="text-xl sm:text-2xl font-bold">{pick.recommended_games}</p>
         </div>
-        <div>
-          <p className="text-xs text-slate-500 mb-1">Total Investment</p>
-          <p className="text-2xl font-bold">${totalWager.toFixed(2)}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">before winnings</p>
+        <div className="flex sm:block items-center justify-between">
+          <p className="text-xs text-slate-500 sm:mb-1">Total Investment</p>
+          <p className="text-xl sm:text-2xl font-bold">${totalWager.toFixed(2)}</p>
         </div>
       </div>
 
       {/* Best play window */}
       {pick.best_hour !== null && (
-        <div className={`rounded-xl p-5 flex items-center gap-5 border ${windowStyle}`}>
-          <div className="flex-1">
+        <div className={`rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-5 border ${windowStyle}`}>
+          <div className="flex-1 w-full sm:w-auto">
             <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] mb-1">Best Play Window</p>
-            <p className="text-xl font-bold">
+            <p className="text-2xl sm:text-xl font-bold">
               {fmtHour(pick.best_hour)} – {fmtHour(pick.best_hour + 1)}
             </p>
             <p className="text-xs text-slate-600 mt-1">Eastern Time</p>
           </div>
-          <div className="text-right">
+          <div className="sm:text-right w-full sm:w-auto">
             {win.state === 'active' && (
-              <div className="flex items-center gap-2 justify-end mb-1">
-                <span className="relative flex h-2 w-2">
+              <div className="flex items-center gap-2 sm:justify-end mb-1">
+                <span className="relative flex h-2.5 w-2.5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-40" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
                 </span>
-                <span className="text-xs text-green-400 font-semibold uppercase tracking-wide">Live Window</span>
+                <span className="text-sm sm:text-xs text-green-400 font-semibold uppercase tracking-wide">Live Window</span>
               </div>
             )}
-            <p className={`text-sm font-semibold ${windowLabelStyle}`}>{win.label}</p>
-            {win.state === 'before' && (
-              <p className="text-[10px] text-slate-600 mt-0.5">Based on Arthur's win patterns</p>
-            )}
-            {win.state === 'past' && (
-              <p className="text-[10px] text-slate-600 mt-0.5">Come back at 6 AM tomorrow</p>
-            )}
+            <p className={`text-base sm:text-sm font-semibold ${windowLabelStyle}`}>{win.label}</p>
           </div>
         </div>
       )}
@@ -348,20 +337,18 @@ export default function DailyPickPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <p className="text-xs text-slate-600 mb-1">Long-Run Avg Per Game</p>
-            <p className={`text-2xl font-bold ${ppg >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <div className="flex sm:block items-center justify-between">
+            <p className="text-xs text-slate-600 sm:mb-1">Long-Run Avg Per Game</p>
+            <p className={`text-xl sm:text-2xl font-bold ${ppg >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {ppg >= 0 ? '+' : ''}${ppg.toFixed(3)}
             </p>
-            <p className="text-[10px] text-slate-700 mt-0.5">includes rare big wins</p>
           </div>
-          <div>
-            <p className="text-xs text-slate-600 mb-1">Projected Session ({pick.recommended_games} games)</p>
-            <p className={`text-2xl font-bold ${total >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+          <div className="flex sm:block items-center justify-between">
+            <p className="text-xs text-slate-600 sm:mb-1">Projected Session ({pick.recommended_games}g)</p>
+            <p className={`text-xl sm:text-2xl font-bold ${total >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {total >= 0 ? '+' : ''}${total.toFixed(2)}
             </p>
-            <p className="text-[10px] text-slate-700 mt-0.5">theoretical, not guaranteed</p>
           </div>
         </div>
         {pick.reasoning && (
@@ -426,21 +413,20 @@ export default function DailyPickPage() {
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-slate-500 border-b border-[#2a2a2e]">
-                      <th className="px-4 py-2 text-left">Date</th>
-                      <th className="px-4 py-2 text-left">Play</th>
-                      <th className="px-4 py-2 text-left">Numbers</th>
-                      <th className="px-4 py-2 text-left">W–L</th>
-                      <th className="px-4 py-2 text-right">Win Rate</th>
-                      <th className="px-4 py-2 text-right">P&L</th>
-                      <th className="px-4 py-2 text-right">Best Win</th>
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-left">Play</th>
+                      <th className="px-3 py-2 text-left hidden sm:table-cell">Numbers</th>
+                      <th className="px-3 py-2 text-left">W–L</th>
+                      <th className="px-3 py-2 text-right">P&L</th>
+                      <th className="px-3 py-2 text-right hidden sm:table-cell">Best</th>
                     </tr>
                   </thead>
                   <tbody>
                     {history.map(h => (
                       <tr key={h.pick_date} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
-                        <td className="px-4 py-2 font-mono text-slate-300">{h.pick_date}</td>
-                        <td className="px-4 py-2 text-slate-400">{h.spot_count}-spot</td>
-                        <td className="px-4 py-2">
+                        <td className="px-3 py-2 font-mono text-slate-300 whitespace-nowrap">{h.pick_date}</td>
+                        <td className="px-3 py-2 text-slate-400">{h.spot_count}-sp</td>
+                        <td className="px-3 py-2 hidden sm:table-cell">
                           <div className="flex flex-wrap gap-0.5">
                             {h.picks.slice(0, h.spot_count).sort((a, b) => a - b).map(n => (
                               <span key={n} className="w-5 h-5 rounded-full bg-crimson/20 border border-crimson/40 text-crimson text-[9px] font-bold flex items-center justify-center">
@@ -449,24 +435,21 @@ export default function DailyPickPage() {
                             ))}
                           </div>
                         </td>
-                        <td className="px-4 py-2">
+                        <td className="px-3 py-2">
                           {h.games_scored > 0 ? (
                             <>
                               <span className="text-green-400">{h.wins}W</span>
-                              <span className="text-slate-500 mx-1">–</span>
+                              <span className="text-slate-500 mx-0.5">–</span>
                               <span className="text-red-400">{h.games_scored - h.wins}L</span>
                             </>
                           ) : (
-                            <span className="text-slate-600">no data</span>
+                            <span className="text-slate-600">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-2 text-right text-slate-400">
-                          {h.games_scored > 0 ? `${((h.wins / h.games_scored) * 100).toFixed(0)}%` : '—'}
-                        </td>
-                        <td className={`px-4 py-2 text-right font-mono ${h.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        <td className={`px-3 py-2 text-right font-mono ${h.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                           {h.games_scored > 0 ? `${h.total_pnl >= 0 ? '+' : ''}$${h.total_pnl.toFixed(2)}` : '—'}
                         </td>
-                        <td className="px-4 py-2 text-right">
+                        <td className="px-3 py-2 text-right hidden sm:table-cell">
                           {h.best_win > 0 ? `$${h.best_win}` : '—'}
                         </td>
                       </tr>

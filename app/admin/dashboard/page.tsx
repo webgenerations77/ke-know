@@ -282,7 +282,7 @@ export default function DashboardPage() {
         <div className="bg-surface rounded-xl p-4">
           <div className="flex justify-between items-center mb-3">
             <h2 className="text-sm font-semibold text-slate-300">Evolution Engine</h2>
-            <a href="/strategy-lab" className="text-xs text-crimson hover:underline">Strategy Lab →</a>
+            <a href="/admin/strategy-lab" className="text-xs text-crimson hover:underline">Strategy Lab →</a>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>

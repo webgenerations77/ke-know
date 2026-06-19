@@ -9,13 +9,13 @@ const NAV = [
   { href: '/monitor', label: 'Live Monitor', icon: '⬤' },
   { href: '/daily-pick', label: 'Daily Pick', icon: '★' },
   { href: '/spot-advisor', label: 'Spot Advisor', icon: '◈' },
-  { href: '/strategy-lab', label: 'Strategy Lab', icon: '⚙' },
-  { href: '/dashboard', label: 'Dashboard', icon: '◉' },
+  { href: '/my-picks', label: 'My Picks', icon: '◇' },
   { href: '/my-favorites', label: 'My Favorites', icon: '✦' },
+  { href: '/prediction-portal', label: 'Predictions', icon: '◎' },
+  { href: '/learning-center', label: 'Simulator', icon: '▶' },
   { href: '/number-cloud', label: 'Number Cloud', icon: '☁' },
   { href: '/frequency', label: 'Frequency', icon: '≡' },
-  { href: '/bonus-patterns', label: 'Bonus Patterns', icon: '✕' },
-  { href: '/time-patterns', label: 'Time Patterns', icon: '◷' },
+  { href: '/pair-patterns', label: 'Pair Patterns', icon: '◷' },
   { href: '/draw-history', label: 'Draw History', icon: '⊞' },
 ];
 
@@ -49,7 +49,19 @@ export function Sidebar() {
           );
         })}
       </ul>
-      <div className="px-4 pb-4">
+      <div className="px-4 pb-4 space-y-3">
+        <Link
+          href="/admin/strategy-lab"
+          onClick={() => setOpen(false)}
+          className={`flex items-center gap-3 px-2 py-2 text-xs rounded-lg transition-colors ${
+            path.startsWith('/admin')
+              ? 'bg-[#1e1e24] text-slate-300'
+              : 'text-slate-600 hover:text-slate-400 hover:bg-[#1e1e24]'
+          }`}
+        >
+          <span className="w-5 text-center">⚙</span>
+          Admin
+        </Link>
         <SyncStatus />
       </div>
     </nav>

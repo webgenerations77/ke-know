@@ -56,9 +56,11 @@ Key constraint: promotion requires positive test PnL/game OR 10%+ higher fitness
 
 Arthur is a stateless AI personality on the Live Monitor page. His thought engine (`computeArthurFull` in `app/monitor/page.tsx`) builds layered commentary from:
 - **Reactive**: current streak detection, last-result reactions, spot-level hot/cold today
-- **Trend-based**: weekly spot performance opinions, day-over-day comparisons, profitable day ratios, all-time best win memory
+- **Trend-based**: weekly spot performance opinions, day-over-day comparisons, profitable day ratios, all-time best win memory, generation depth, champion diversity
 - **Mood system**: fire/good/steady/down/waiting — drives UI color (pulse dot, gradient background)
-- Outputs a main thought + up to 2 secondary observations
+- **Template pools**: each trigger has 3-5 phrase variants, randomly selected via `pick()` helper. Observations are weight-shuffled to surface different insights each render
+- Outputs a main thought + up to 3 secondary observations
+- Uses day-of-week names and time-of-day for contextual variety
 
 ### Prize Tables & Math
 
@@ -82,3 +84,20 @@ Arthur is a stateless AI personality on the Live Monitor page. His thought engin
 - Realtime enabled on: `games`, `system_events`, `live_results`, `strategies`, `strategy_results`
 - Data source: Maryland Lottery Keno API proxied through `/api/lottery` (no CORS on source)
 - `lib/prediction-engine.ts` is an older non-evolutionary prediction system used only by the Prediction Portal page; the evolution engine is the primary system
+
+### Page Structure
+
+**Player pages** (main sidebar nav):
+- `/monitor` — Live Monitor with Arthur, time filter (today/week/month/all), win/loss, live feed
+- `/daily-pick` — Arthur's daily recommended play
+- `/spot-advisor` — Spot count recommendations
+- `/my-picks` — Custom pick generator
+- `/my-favorites` — Favorite game tracker
+- `/prediction-portal` — AI prediction engine
+- `/learning-center` — Live/backtest simulator
+- `/number-cloud`, `/frequency`, `/pair-patterns`, `/draw-history` — Data exploration
+
+**Admin pages** (`/admin/*` route with dedicated layout):
+- `/admin/strategy-lab` — Evolution engine dashboard, genome explorer
+- `/admin/dashboard` — Analytics overview
+- `/admin/data-ingestion` — DB sync controls, evolution triggers, backfill

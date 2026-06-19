@@ -55,12 +55,20 @@ interface ArthurOutput {
   observations: string[];
 }
 
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
 function computeArthurFull(ctx: ArthurContext): ArthurOutput {
   const { evoState, champions, bToday, bAll, b24, events, allLiveResults, dailyMap } = ctx;
 
   if (!evoState || evoState.current_generation === 0) {
     return {
-      main: "I'm brand new here — haven't had my first look at the data yet. Hit that evolution button and let me start learning. I promise I'll have plenty to say once I've crunched some numbers.",
+      main: pick([
+        "I'm brand new here — haven't had my first look at the data yet. Hit that evolution button and let me start learning.",
+        "Just woke up. No data to chew on yet — run evolution and I'll start building my playbook.",
+        "Fresh install, zero experience. I need my first evolution cycle before I can start making moves.",
+      ]),
       mood: 'waiting',
       observations: [],
     };
@@ -70,16 +78,13 @@ function computeArthurFull(ctx: ArthurContext): ArthurOutput {
   const champCount = champions.length;
   const now = Date.now();
 
-  // ── Reactive: what just happened? ──
   const lastEvoEvt = events.find(e => e.event_type === 'evolution_complete');
   const evoRecent = lastEvoEvt && (now - new Date(lastEvoEvt.occurred_at).getTime()) < 30 * 60 * 1000;
 
-  // Most recent results for streak detection
   const recentSorted = [...allLiveResults]
     .sort((a, b) => new Date(b.scored_at).getTime() - new Date(a.scored_at).getTime());
   const lastResult = recentSorted[0] ?? null;
 
-  // Current streak
   let streakType: 'win' | 'loss' | null = null;
   let streakCount = 0;
   for (const r of recentSorted) {
@@ -94,7 +99,6 @@ function computeArthurFull(ctx: ArthurContext): ArthurOutput {
     }
   }
 
-  // ── Spot-level opinions (today) ──
   const todayBySpot = new Map<number, PerformanceBucket>();
   const todayKey = new Date().toLocaleDateString('en-CA');
   for (const r of allLiveResults) {
@@ -106,7 +110,6 @@ function computeArthurFull(ctx: ArthurContext): ArthurOutput {
     todayBySpot.set(r.spot_count, b);
   }
 
-  // Weekly spot trends
   const weekBySpot = new Map<number, PerformanceBucket>();
   const weekAgo = now - 7 * 86400000;
   for (const r of allLiveResults) {
@@ -118,7 +121,6 @@ function computeArthurFull(ctx: ArthurContext): ArthurOutput {
     weekBySpot.set(r.spot_count, b);
   }
 
-  // Find best/worst spot this week
   let bestWeekSpot = 0, worstWeekSpot = 0;
   let bestWeekPpg = -Infinity, worstWeekPpg = Infinity;
   for (const [spot, b] of weekBySpot) {
@@ -128,96 +130,158 @@ function computeArthurFull(ctx: ArthurContext): ArthurOutput {
     if (ppg < worstWeekPpg) { worstWeekPpg = ppg; worstWeekSpot = spot; }
   }
 
-  // Find best/worst spot today
-  let bestTodaySpot = 0, worstTodaySpot = 0;
-  let bestTodayPpg = -Infinity, worstTodayPpg = Infinity;
+  let bestTodaySpot = 0;
+  let bestTodayPpg = -Infinity;
   for (const [spot, b] of todayBySpot) {
     if (b.total < 3) continue;
     const ppg = b.pnl / b.total;
     if (ppg > bestTodayPpg) { bestTodayPpg = ppg; bestTodaySpot = spot; }
-    if (ppg < worstTodayPpg) { worstTodayPpg = ppg; worstTodaySpot = spot; }
   }
 
-  // Day-over-day trend: was yesterday better or worse?
   const yesterday = new Date(now - 86400000).toLocaleDateString('en-CA');
   const bYesterday = dailyMap.get(yesterday);
 
-  // All-time best single win
   const allTimeBest = allLiveResults.length > 0
     ? allLiveResults.reduce((best, r) => r.prize > best.prize ? r : best, allLiveResults[0])
     : null;
 
-  // Profitable days count
   const dailyEntries = [...dailyMap.entries()];
   const profitableDays = dailyEntries.filter(([, b]) => b.pnl > 0).length;
   const totalDays = dailyEntries.length;
 
-  // Time of day
   const hour = new Date().getHours();
   const timeOfDay = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
 
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayOfWeek = dayNames[new Date().getDay()];
+
+  const activeSpots = new Set(champions.map(c => c.spot_count));
+
   // ── Build observations (secondary insights) ──
-  const observations: string[] = [];
+  const observations: { text: string; weight: number }[] = [];
 
-  // Streak observation
   if (streakType === 'win' && streakCount >= 3) {
-    observations.push(`On a ${streakCount}-game win streak right now. Feeling dangerous.`);
-  } else if (streakType === 'loss' && streakCount >= 5) {
-    observations.push(`${streakCount} losses in a row — cold stretch, but I've seen worse. The math hasn't changed.`);
+    observations.push({ weight: 10, text: pick([
+      `${streakCount}-game win streak rolling. Momentum is real.`,
+      `${streakCount} wins in a row — can't miss right now.`,
+      `Hot streak: ${streakCount} consecutive wins and counting.`,
+      `${streakCount} straight wins. This is the zone.`,
+    ])});
   } else if (streakType === 'loss' && streakCount >= 10) {
-    observations.push(`Brutal ${streakCount}-game losing streak. This is exactly why I track max cold streaks in my fitness score — I need strategies that can survive this.`);
+    observations.push({ weight: 10, text: pick([
+      `Brutal ${streakCount}-game cold streak. This is exactly why I track max cold streaks in fitness — need strategies that survive this.`,
+      `${streakCount} losses deep. Painful, but cold streaks end. My evolution accounts for this.`,
+    ])});
+  } else if (streakType === 'loss' && streakCount >= 5) {
+    observations.push({ weight: 7, text: pick([
+      `${streakCount} losses in a row — cold stretch, but I've weathered worse.`,
+      `Down ${streakCount} straight. The math hasn't changed, just variance doing its thing.`,
+      `Cold streak at ${streakCount}. Part of the game — staying patient.`,
+    ])});
   }
 
-  // Spot-specific opinion (weekly trend)
   if (bestWeekSpot > 0 && bestWeekPpg > 0 && weekBySpot.get(bestWeekSpot)!.total >= 10) {
-    observations.push(`${bestWeekSpot}-spot has been my best play this week — averaging +$${bestWeekPpg.toFixed(2)}/game. I'm leaning into it.`);
+    observations.push({ weight: 6, text: pick([
+      `${bestWeekSpot}-spot has been my best play this week — averaging +$${bestWeekPpg.toFixed(2)}/game.`,
+      `Leaning into ${bestWeekSpot}-spot plays this week. +$${bestWeekPpg.toFixed(2)}/game over ${weekBySpot.get(bestWeekSpot)!.total} games.`,
+      `${bestWeekSpot}-spot is carrying the portfolio this week at +$${bestWeekPpg.toFixed(2)} per game.`,
+    ])});
   }
+
   if (worstWeekSpot > 0 && worstWeekPpg < -0.5 && bestWeekSpot !== worstWeekSpot && weekBySpot.get(worstWeekSpot)!.total >= 10) {
-    observations.push(`${worstWeekSpot}-spot has been giving me trouble all week. Might need a strategy shake-up there next evolution.`);
+    observations.push({ weight: 5, text: pick([
+      `${worstWeekSpot}-spot is struggling this week. Might need a strategy shake-up there.`,
+      `Rough week for ${worstWeekSpot}-spot plays. Next evolution cycle should adapt.`,
+      `${worstWeekSpot}-spot is my weakest link right now — $${worstWeekPpg.toFixed(2)}/game.`,
+    ])});
   }
 
-  // Today's standout spot
   if (bestTodaySpot > 0 && bestTodayPpg > 0.5 && todayBySpot.get(bestTodaySpot)!.total >= 5) {
-    observations.push(`${bestTodaySpot}-spot is on fire today — $${bestTodayPpg.toFixed(2)}/game avg across ${todayBySpot.get(bestTodaySpot)!.total} plays.`);
+    observations.push({ weight: 8, text: pick([
+      `${bestTodaySpot}-spot is on fire today — $${bestTodayPpg.toFixed(2)}/game across ${todayBySpot.get(bestTodaySpot)!.total} plays.`,
+      `Today's MVP: ${bestTodaySpot}-spot at +$${bestTodayPpg.toFixed(2)} per game.`,
+      `${bestTodaySpot}-spot is printing today. ${todayBySpot.get(bestTodaySpot)!.total} plays, all trending up.`,
+    ])});
   }
 
-  // Day-over-day comparison
   if (bYesterday && bYesterday.total >= 10 && bToday.total >= 10) {
     const yPpg = bYesterday.pnl / bYesterday.total;
     const tPpg = bToday.pnl / bToday.total;
     if (tPpg > yPpg + 0.1) {
-      observations.push(`Running better than yesterday — that's the kind of trend I like to see.`);
+      observations.push({ weight: 5, text: pick([
+        `Running better than yesterday — that's the kind of trend line I want to see.`,
+        `Outpacing yesterday's numbers. The strategies are adapting.`,
+        `Day-over-day improvement. Small edges compound.`,
+      ])});
     } else if (tPpg < yPpg - 0.3) {
-      observations.push(`Yesterday was better. Keno doesn't owe me consistency, but I take notes.`);
+      observations.push({ weight: 4, text: pick([
+        `Yesterday was stronger. Keno doesn't owe me consistency, but I take notes.`,
+        `Trailing yesterday's pace. Not worried — variance is part of the game.`,
+        `Slower day than yesterday. I adjust, I don't chase.`,
+      ])});
     }
   }
 
-  // Profitable days ratio
   if (totalDays >= 5) {
     const pct = Math.round((profitableDays / totalDays) * 100);
     if (pct >= 50) {
-      observations.push(`Profitable on ${profitableDays} out of ${totalDays} days tracked (${pct}%). Not bad for a game designed to beat you.`);
+      observations.push({ weight: 4, text: pick([
+        `Profitable on ${profitableDays} of ${totalDays} days tracked (${pct}%). Not bad for a game designed to beat you.`,
+        `${pct}% of tracked days finished green. The evolution engine is earning its keep.`,
+        `More winning days than losing — ${profitableDays} out of ${totalDays}. The system works.`,
+      ])});
     } else if (pct < 30 && totalDays >= 7) {
-      observations.push(`Only ${profitableDays} profitable days out of ${totalDays}. I'm working on it — each evolution cycle teaches me something new.`);
+      observations.push({ weight: 3, text: pick([
+        `Only ${profitableDays} profitable days out of ${totalDays}. Each evolution cycle sharpens the edge.`,
+        `${pct}% profitable days — room to improve. That's what evolution is for.`,
+      ])});
     }
   }
 
-  // All-time best win memory
   if (allTimeBest && allTimeBest.prize >= 10) {
-    observations.push(`My best hit so far: $${allTimeBest.prize} on a ${allTimeBest.spot_count}-spot play (${allTimeBest.matches}/${allTimeBest.spot_count} matches, game #${allTimeBest.game_num}). That's the kind of moment I'm always chasing.`);
+    observations.push({ weight: 3, text: pick([
+      `Best hit ever: $${allTimeBest.prize} on ${allTimeBest.spot_count}-spot (${allTimeBest.matches}/${allTimeBest.spot_count}). Always chasing the next one.`,
+      `Personal record: $${allTimeBest.prize} from a ${allTimeBest.spot_count}-spot play. That's the kind of catch that makes it all worth it.`,
+      `All-time best: $${allTimeBest.prize}. ${allTimeBest.spot_count}-spot, ${allTimeBest.matches} matches. I remember every big win.`,
+    ])});
   }
 
-  // Last result reaction
   if (lastResult && (now - new Date(lastResult.scored_at).getTime()) < 10 * 60 * 1000) {
     if (lastResult.prize >= 50) {
-      observations.push(`Just hit $${lastResult.prize} on a ${lastResult.spot_count}-spot play! ${lastResult.matches}/${lastResult.spot_count} matches. That's what I'm talking about.`);
-    } else if (lastResult.prize > 0 && lastResult.prize < 50) {
-      observations.push(`Small win on the last game — $${lastResult.prize} on ${lastResult.spot_count}-spot. Not huge but it keeps the bankroll moving.`);
+      observations.push({ weight: 10, text: pick([
+        `Just hit $${lastResult.prize} on ${lastResult.spot_count}-spot! ${lastResult.matches}/${lastResult.spot_count} matches. That's what I'm talking about.`,
+        `Big catch! $${lastResult.prize} on a ${lastResult.spot_count}-spot play just now. The strategy called it.`,
+        `$${lastResult.prize} winner just landed — ${lastResult.matches}/${lastResult.spot_count} on a ${lastResult.spot_count}-spot. Love it.`,
+      ])});
+    } else if (lastResult.prize > 0) {
+      observations.push({ weight: 6, text: pick([
+        `Small win last game — $${lastResult.prize} on ${lastResult.spot_count}-spot. Keeps the bankroll ticking.`,
+        `$${lastResult.prize} on the last draw. Not a headline, but every win counts.`,
+        `Picked up $${lastResult.prize} on that last ${lastResult.spot_count}-spot play. Steady progress.`,
+      ])});
     }
   }
 
-  // Limit to 2 most interesting observations
-  const topObs = observations.slice(0, 2);
+  if (gen >= 10) {
+    observations.push({ weight: 2, text: pick([
+      `Gen ${gen} — ${gen} rounds of evolution behind these picks. Each generation learns from the last.`,
+      `${gen} generations deep now. The strategies have been tested against thousands of games.`,
+      `I've evolved through ${gen} generations. The weak strategies got culled, the strong survived.`,
+    ])});
+  }
+
+  if (champCount >= 5) {
+    observations.push({ weight: 2, text: pick([
+      `Running champions across ${activeSpots.size} different spot counts. Diversification is defense.`,
+      `${champCount} active champions covering ${activeSpots.size} spot counts. Broad coverage.`,
+    ])});
+  }
+
+  // Shuffle + weight-sort, take top 3
+  const shuffled = observations
+    .map(o => ({ ...o, r: Math.random() * o.weight }))
+    .sort((a, b) => b.r - a.r);
+  const topObs = shuffled.slice(0, 3).map(o => o.text);
 
   // ── Build main thought ──
   let main = '';
@@ -227,40 +291,72 @@ function computeArthurFull(ctx: ArthurContext): ArthurOutput {
     const best = champions.reduce((a, c) =>
       (c.fitness_score ?? -999) > (a.fitness_score ?? -999) ? c : a, champions[0]);
     const fit = (best.fitness_score ?? 0).toFixed(3);
-    main = `Fresh out of evolution — gen ${gen} is live and I've got new strategies to prove. Leading with a ${best.spot_count}-spot play right now (fitness: ${fit}). That score is my confidence rating — it blends backtest performance, live results, win consistency, and cold streak resilience. The higher it is, the more I trust it. Let's see what this generation can do.`;
+    main = pick([
+      `Fresh out of evolution — gen ${gen} just dropped. Leading with ${best.spot_count}-spot (fitness: ${fit}). Let's see what this batch can do.`,
+      `Gen ${gen} is live. New strategies, new confidence. My top pick is ${best.spot_count}-spot at ${fit} fitness. Time to prove it on real draws.`,
+      `Just evolved to gen ${gen}. Strongest play: ${best.spot_count}-spot with a ${fit} fitness rating. The higher that number, the more I trust the picks.`,
+    ]);
     mood = 'good';
   } else if (bToday.total >= 10) {
     const todayWR = (bToday.wins / bToday.total * 100).toFixed(1);
     const allWR = bAll.total > 0 ? (bAll.wins / bAll.total * 100) : 0;
     if (bToday.pnl > 2) {
-      main = `Good ${timeOfDay}! Up $${bToday.pnl.toFixed(2)} across ${bToday.total} shadow plays today — ${todayWR}% win rate. Gen ${gen} is putting in work.`;
+      main = pick([
+        `Good ${timeOfDay}. Up $${bToday.pnl.toFixed(2)} across ${bToday.total} plays — ${todayWR}% win rate. Gen ${gen} is delivering.`,
+        `${dayOfWeek}'s treating me well. +$${bToday.pnl.toFixed(2)} on ${bToday.total} shadow plays so far. ${todayWR}% hit rate.`,
+        `Solid ${timeOfDay} — ${todayWR}% wins, +$${bToday.pnl.toFixed(2)} net. The gen ${gen} strategies are reading these draws well.`,
+      ]);
       mood = bToday.pnl > 5 ? 'fire' : 'good';
     } else if (allWR > 0 && (bToday.wins / bToday.total * 100) > allWR * 1.1) {
-      main = `Outperforming my lifetime average today — ${todayWR}% vs my usual ${allWR.toFixed(1)}%. I'll take it. ${bToday.total} plays deep and the gen ${gen} strategies are reading the game well.`;
+      main = pick([
+        `Outperforming my lifetime average — ${todayWR}% today vs ${allWR.toFixed(1)}% overall. ${bToday.total} plays in and gen ${gen} is sharp.`,
+        `Beating the baseline. ${todayWR}% win rate today, normally ${allWR.toFixed(1)}%. ${bToday.total} games tracked this ${timeOfDay}.`,
+      ]);
       mood = 'good';
     } else if (bToday.pnl < -5) {
       const absLoss = Math.abs(bToday.pnl).toFixed(2);
-      main = `Rough ${timeOfDay} — down $${absLoss} across ${bToday.total} plays. The draws aren't cooperating, but that's the nature of the game. I don't panic, I adapt. Next evolution cycle, I'll factor in what I'm learning from today's patterns.`;
+      main = pick([
+        `Tough ${dayOfWeek} — down $${absLoss} across ${bToday.total} plays. The draws aren't cooperating, but I don't panic. I adapt.`,
+        `Rough ${timeOfDay}. -$${absLoss} on ${bToday.total} shadow plays. Variance hits hard sometimes. Next evolution will learn from today.`,
+        `Down $${absLoss} today. ${bToday.total} plays, and the numbers aren't falling my way. That's Keno — the edge is in the long game.`,
+      ]);
       mood = 'down';
     } else if (bToday.pnl < -1) {
-      main = `Grinding through a tough spot today — slightly negative at ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} across ${bToday.total} plays. ${todayWR}% win rate isn't terrible, just need the bigger catches to start landing.`;
+      main = pick([
+        `Grinding through a flat spot — ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} across ${bToday.total} plays. ${todayWR}% win rate. Need the bigger catches to start landing.`,
+        `Slightly underwater this ${timeOfDay}. ${todayWR}% win rate isn't bad — just need a couple hits to swing positive.`,
+        `Treading water at ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} on ${bToday.total} games. Close to the edge — one good catch flips it.`,
+      ]);
       mood = 'steady';
     } else {
-      main = `Steady ${timeOfDay} so far — ${todayWR}% win rate, ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} net across ${bToday.total} plays. Nothing flashy, but I'm playing the long game with gen ${gen}. Consistency beats fireworks.`;
+      main = pick([
+        `Steady ${dayOfWeek} so far — ${todayWR}% win rate, ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} net. Playing the long game with gen ${gen}.`,
+        `Nothing flashy this ${timeOfDay}. ${todayWR}% hit rate, ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)} across ${bToday.total} plays. Consistency beats fireworks.`,
+        `Quiet ${timeOfDay} — breaking even at ${bToday.pnl >= 0 ? '+' : ''}$${bToday.pnl.toFixed(2)}. ${bToday.total} games in. Sometimes steady is the play.`,
+      ]);
       mood = 'steady';
     }
   } else if (b24.total > 0) {
     const wr24 = (b24.wins / b24.total * 100).toFixed(1);
-    main = `Tracked ${b24.total} games in the last 24 hours — ${wr24}% win rate, ${b24.pnl >= 0 ? '+' : ''}$${b24.pnl.toFixed(2)} P&L. Still gathering data this ${timeOfDay} to see how gen ${gen} handles today's draws.`;
+    main = pick([
+      `${b24.total} games tracked in the last 24 hours — ${wr24}% win rate, ${b24.pnl >= 0 ? '+' : ''}$${b24.pnl.toFixed(2)} P&L. Still building today's picture.`,
+      `Last 24h: ${b24.total} plays, ${wr24}% wins, ${b24.pnl >= 0 ? '+' : ''}$${b24.pnl.toFixed(2)} net. Gathering data to see how gen ${gen} handles ${dayOfWeek}.`,
+    ]);
     mood = b24.pnl >= 0 ? 'good' : 'steady';
   } else if (champCount > 0) {
     const best = champions.reduce((a, c) =>
       (c.fitness_score ?? -999) > (a.fitness_score ?? -999) ? c : a, champions[0]);
     const fit = (best.fitness_score ?? 0).toFixed(3);
-    main = `Got ${champCount} champion${champCount !== 1 ? 's' : ''} loaded up from gen ${gen}. My strongest is a ${best.spot_count}-spot strategy with a ${fit} fitness rating — that represents my confidence based on how it performed in backtesting, how consistent its wins are, and how well it handles cold streaks. Waiting on live draws to start keeping score.`;
+    main = pick([
+      `${champCount} champion${champCount !== 1 ? 's' : ''} ready from gen ${gen}. Strongest: ${best.spot_count}-spot at ${fit} fitness. Waiting on live draws to keep score.`,
+      `Gen ${gen} loaded — ${champCount} strategies primed and tested. Top play is ${best.spot_count}-spot (${fit} fitness). Need real draws to start proving it.`,
+    ]);
     mood = 'waiting';
   } else {
-    main = `Gen ${gen} strategies are locked in. Waiting on live draws to score against — once the data starts flowing, I'll have a lot more to say.`;
+    main = pick([
+      `Gen ${gen} strategies locked in. Waiting on live draws to score against.`,
+      `Standing by for results. Gen ${gen} is ready — just need the draws to start flowing.`,
+    ]);
     mood = 'waiting';
   }
 
@@ -361,6 +457,8 @@ export default function MonitorPage() {
   const [evoDetailOpen, setEvoDetailOpen] = useState(false);
   const [biggestWinOpen, setBiggestWinOpen] = useState(false);
   const [stratGenMap, setStratGenMap] = useState<Map<number, number>>(new Map());
+  const [timeFilter, setTimeFilter] = useState<'today' | 'week' | 'month' | 'all'>('today');
+  const [activityLogOpen, setActivityLogOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     const [
@@ -535,6 +633,9 @@ export default function MonitorPage() {
   const { all: b7d, bySpot: bs7d } = computeBucket(d7, allLiveResults);
   const { all: bAll, bySpot: bsAll } = computeBucket(0, allLiveResults);
 
+  const m30 = 30 * 24 * 3600 * 1000;
+  const { all: b30d, bySpot: bs30d } = computeBucket(m30, allLiveResults);
+
   const todayKey = new Date().toLocaleDateString('en-CA');
   const dailyMap = new Map<string, PerformanceBucket>();
   for (const r of allLiveResults) {
@@ -548,6 +649,20 @@ export default function MonitorPage() {
   }
   const bToday = dailyMap.get(todayKey) ?? emptyBucket();
   const dailyRows = [...dailyMap.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+
+  const bsTodayMap = new Map<number, PerformanceBucket>();
+  for (const r of allLiveResults) {
+    if (new Date(r.scored_at).toLocaleDateString('en-CA') !== todayKey) continue;
+    const sb = bsTodayMap.get(r.spot_count) ?? emptyBucket();
+    sb.total++; sb.pnl += r.pnl;
+    if (r.prize > 0) sb.wins++;
+    if (r.prize > sb.best) sb.best = r.prize;
+    bsTodayMap.set(r.spot_count, sb);
+  }
+
+  const filteredBucket = { today: bToday, week: b7d, month: b30d, all: bAll }[timeFilter] ?? bToday;
+  const filteredBySpot = { today: bsTodayMap, week: bs7d, month: bs30d, all: bsAll }[timeFilter] ?? bsTodayMap;
+  const filterLabel = { today: 'Today', week: 'This Week', month: 'This Month', all: 'All Time' }[timeFilter];
 
   const lastPoll = events.find(e => e.event_type === 'poll_success' || e.event_type === 'poll_no_new_game');
   const lastSync = events.find(e => e.event_type === 'sync_complete');
@@ -642,14 +757,14 @@ export default function MonitorPage() {
   }[arthur.mood];
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Live Monitor</h1>
+    <div className="space-y-4 sm:space-y-6">
+      <h1 className="text-xl sm:text-2xl font-bold">Live Monitor</h1>
 
       {/* ── Arthur's Current Thought ── */}
       <div className="relative rounded-xl border border-[#2a2a2e] bg-surface overflow-hidden">
         <div className="absolute inset-0 pointer-events-none"
           style={{ background: `radial-gradient(ellipse 80% 100% at 0% 50%, ${moodGradient} 0%, transparent 60%)` }} />
-        <div className="relative flex items-start gap-4 px-5 py-4">
+        <div className="relative flex items-start gap-3 sm:gap-4 px-4 sm:px-5 py-3 sm:py-4">
           <div className="shrink-0 mt-0.5 flex items-center justify-center w-8 h-8 rounded-full bg-crimson/10 border border-crimson/20">
             <span className="text-crimson text-xs font-bold tracking-tight">A</span>
           </div>
@@ -680,164 +795,58 @@ export default function MonitorPage() {
         </div>
       </div>
 
-      {/* ── TOP: Evolution + Database + Biggest Win ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <StatCard
-          label="Evolution"
-          value={evoState?.current_generation ? `Gen ${evoState.current_generation}` : 'Not started'}
-          sub={evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
-          ok={!lastEvo || lastEvo.severity !== 'error'}
-          onClick={() => setEvoDetailOpen(o => !o)}
-        />
-        <StatCard
-          label="Database"
-          value={`${totalGames.toLocaleString()} games`}
-          sub={latestGameTs ? `Latest: ${fmtDate(latestGameTs)}` : undefined}
-          ok={minutesAgo(latestGameTs) < 10}
-        />
-        <StatCard
-          label="Biggest Win"
-          value={biggestWinResult ? `$${biggestWinResult.prize}` : '—'}
-          sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · Game #${biggestWinResult.game_num}` : 'No wins yet'}
-          onClick={() => setBiggestWinOpen(o => !o)}
-        />
+      {/* ── Time Filter ── */}
+      <div className="flex items-center gap-1 sm:gap-2">
+        {(['today', 'week', 'month', 'all'] as const).map(f => (
+          <button
+            key={f}
+            onClick={() => setTimeFilter(f)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              timeFilter === f
+                ? 'bg-crimson text-white'
+                : 'text-slate-400 hover:text-white bg-surface hover:bg-[#1e1e24]'
+            }`}
+          >
+            {{ today: 'Today', week: 'Week', month: 'Month', all: 'All Time' }[f]}
+          </button>
+        ))}
       </div>
 
-      {/* ── Evolution Generation Breakdown ── */}
-      {evoDetailOpen && (
-        <div className="bg-surface rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
-            <h2 className="font-semibold text-sm">Performance by Generation</h2>
-            <span className="text-xs text-slate-500">{genRows.length} generations</span>
-          </div>
-          {genRows.length === 0 ? (
-            <p className="px-4 py-6 text-slate-500 text-sm">No scored shadow plays yet.</p>
-          ) : (
-            <div className="overflow-x-auto max-h-72">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-surface z-10">
-                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
-                    <th className="px-4 py-2 text-left">Generation</th>
-                    <th className="px-4 py-2 text-left">Games</th>
-                    <th className="px-4 py-2 text-left">W – L</th>
-                    <th className="px-4 py-2 text-right">Win Rate</th>
-                    <th className="px-4 py-2 text-right">Net P&amp;L</th>
-                    <th className="px-4 py-2 text-right">P&amp;L / game</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {genRows.map(([gen, b]) => (
-                    <tr key={gen} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
-                      <td className="px-4 py-2 font-mono text-slate-300">
-                        Gen {gen}
-                        {gen === evoState?.current_generation && (
-                          <span className="ml-2 text-crimson text-[10px] font-semibold uppercase tracking-wide">Current</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2 text-slate-400">{b.total}</td>
-                      <td className="px-4 py-2">
-                        <span className="text-green-400">{b.wins}W</span>
-                        <span className="text-slate-500 mx-1">–</span>
-                        <span className="text-red-400">{b.losses}L</span>
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        {b.total > 0 ? `${((b.wins / b.total) * 100).toFixed(1)}%` : '—'}
-                      </td>
-                      <td className={`px-4 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(2)}
-                      </td>
-                      <td className={`px-4 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Biggest Win 14-Day History ── */}
-      {biggestWinOpen && (
-        <div className="bg-surface rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
-            <h2 className="font-semibold text-sm">Biggest Win by Day (Last 14 Days)</h2>
-            <span className="text-xs text-slate-500">{biggestWinByDay.length} days</span>
-          </div>
-          {biggestWinByDay.length === 0 ? (
-            <p className="px-4 py-6 text-slate-500 text-sm">No wins recorded yet.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
-                    <th className="px-4 py-2 text-left">Date</th>
-                    <th className="px-4 py-2 text-right">Best Prize</th>
-                    <th className="px-4 py-2 text-center">Spot</th>
-                    <th className="px-4 py-2 text-center">Matches</th>
-                    <th className="px-4 py-2 text-right">Game #</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {biggestWinByDay.map(row => (
-                    <tr key={row.date} className={`border-b border-[#1e1e24] hover:bg-[#1e1e24] ${row.date === todayKey ? 'bg-[#16161a]' : ''}`}>
-                      <td className="px-4 py-2 font-mono text-slate-300">
-                        {row.date}
-                        {row.date === todayKey && (
-                          <span className="ml-2 text-crimson text-[10px] font-semibold uppercase tracking-wide">Today</span>
-                        )}
-                      </td>
-                      <td className={`px-4 py-2 text-right font-bold ${row.prize > 0 ? 'text-green-400' : 'text-slate-500'}`}>
-                        {row.prize > 0 ? `$${row.prize}` : 'No wins'}
-                      </td>
-                      <td className="px-4 py-2 text-center text-slate-400">{row.prize > 0 ? `${row.spotCount}-spot` : '—'}</td>
-                      <td className="px-4 py-2 text-center text-slate-400">{row.prize > 0 ? `${row.matches}/${row.spotCount}` : '—'}</td>
-                      <td className="px-4 py-2 text-right font-mono text-slate-500">#{row.gameNum}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Daily Win/Loss Summary ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* ── Win/Loss Summary (filtered) ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <button
           type="button"
           onClick={() => setDailyBreakdownOpen(o => !o)}
-          className="bg-surface rounded-xl p-5 border border-[#2a2a2e] text-left hover:border-crimson/40 transition-colors cursor-pointer"
+          className="bg-surface rounded-xl p-4 sm:p-5 border border-[#2a2a2e] text-left hover:border-crimson/40 transition-colors cursor-pointer"
         >
           <div className="text-xs text-slate-400 mb-1 flex items-center justify-between">
-            <span>Today's Game Win/Loss</span>
-            <span className="text-slate-600">{dailyBreakdownOpen ? '▲' : '▼'} daily history</span>
+            <span>{filterLabel} Win/Loss</span>
+            <span className="text-slate-600">{dailyBreakdownOpen ? '▲' : '▼'}</span>
           </div>
-          <div className="text-3xl font-bold">
-            <span className="text-green-400">{bToday.wins}W</span>
+          <div className="text-2xl sm:text-3xl font-bold">
+            <span className="text-green-400">{filteredBucket.wins}W</span>
             <span className="text-slate-500 mx-1.5">–</span>
-            <span className="text-red-400">{bToday.total - bToday.wins}L</span>
+            <span className="text-red-400">{filteredBucket.total - filteredBucket.wins}L</span>
           </div>
           <div className="text-xs text-slate-500 mt-1">
-            {bToday.total.toLocaleString()} shadow plays today ·{' '}
-            {bToday.total > 0 ? ((bToday.wins / bToday.total) * 100).toFixed(1) : '0.0'}% win rate
+            {filteredBucket.total.toLocaleString()} shadow plays ·{' '}
+            {filteredBucket.total > 0 ? ((filteredBucket.wins / filteredBucket.total) * 100).toFixed(1) : '0.0'}% win rate
           </div>
         </button>
         <button
           type="button"
           onClick={() => setDailyBreakdownOpen(o => !o)}
-          className="bg-surface rounded-xl p-5 border border-[#2a2a2e] text-left hover:border-crimson/40 transition-colors cursor-pointer"
+          className="bg-surface rounded-xl p-4 sm:p-5 border border-[#2a2a2e] text-left hover:border-crimson/40 transition-colors cursor-pointer"
         >
           <div className="text-xs text-slate-400 mb-1 flex items-center justify-between">
-            <span>Today's Dollar Win/Loss</span>
-            <span className="text-slate-600">{dailyBreakdownOpen ? '▲' : '▼'} daily history</span>
+            <span>{filterLabel} P&amp;L</span>
+            <span className="text-slate-600">{dailyBreakdownOpen ? '▲' : '▼'}</span>
           </div>
-          <div className={`text-3xl font-bold ${bToday.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {bToday.pnl >= 0 ? '+' : ''}${bToday.pnl.toFixed(2)}
+          <div className={`text-2xl sm:text-3xl font-bold ${filteredBucket.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {filteredBucket.pnl >= 0 ? '+' : ''}${filteredBucket.pnl.toFixed(2)}
           </div>
           <div className="text-xs text-slate-500 mt-1">
-            Net P&amp;L today · ${bToday.total > 0 ? (bToday.pnl / bToday.total).toFixed(3) : '0.000'}/game avg
+            Net P&amp;L · ${filteredBucket.total > 0 ? (filteredBucket.pnl / filteredBucket.total).toFixed(3) : '0.000'}/game avg
           </div>
         </button>
       </div>
@@ -856,41 +865,34 @@ export default function MonitorPage() {
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-surface z-10">
                   <tr className="text-slate-500 border-b border-[#2a2a2e]">
-                    <th className="px-4 py-2 text-left">Date</th>
-                    <th className="px-4 py-2 text-left">Games (W–L)</th>
-                    <th className="px-4 py-2 text-right">Win Rate</th>
-                    <th className="px-4 py-2 text-right">Net P&amp;L</th>
-                    <th className="px-4 py-2 text-right">P&amp;L / game</th>
-                    <th className="px-4 py-2 text-right">Best Win</th>
+                    <th className="px-3 py-2 text-left">Date</th>
+                    <th className="px-3 py-2 text-left">W–L</th>
+                    <th className="px-3 py-2 text-right">Win %</th>
+                    <th className="px-3 py-2 text-right">P&amp;L</th>
+                    <th className="px-3 py-2 text-right hidden sm:table-cell">P&amp;L/g</th>
+                    <th className="px-3 py-2 text-right hidden sm:table-cell">Best</th>
                   </tr>
                 </thead>
                 <tbody>
                   {dailyRows.map(([date, b]) => (
-                    <tr
-                      key={date}
-                      className={`border-b border-[#1e1e24] hover:bg-[#1e1e24] ${date === todayKey ? 'bg-[#16161a]' : ''}`}
-                    >
-                      <td className="px-4 py-2 font-mono text-slate-300">
+                    <tr key={date} className={`border-b border-[#1e1e24] hover:bg-[#1e1e24] ${date === todayKey ? 'bg-[#16161a]' : ''}`}>
+                      <td className="px-3 py-2 font-mono text-slate-300 whitespace-nowrap">
                         {date}
-                        {date === todayKey && (
-                          <span className="ml-2 text-crimson text-[10px] font-semibold uppercase tracking-wide">Today</span>
-                        )}
+                        {date === todayKey && <span className="ml-1 text-crimson text-[9px] font-semibold">TODAY</span>}
                       </td>
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2">
                         <span className="text-green-400">{b.wins}W</span>
-                        <span className="text-slate-500 mx-1">–</span>
+                        <span className="text-slate-500 mx-0.5">–</span>
                         <span className="text-red-400">{b.total - b.wins}L</span>
                       </td>
-                      <td className="px-4 py-2 text-right">
-                        {b.total > 0 ? `${((b.wins / b.total) * 100).toFixed(1)}%` : '—'}
-                      </td>
-                      <td className={`px-4 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      <td className="px-3 py-2 text-right">{b.total > 0 ? `${((b.wins / b.total) * 100).toFixed(1)}%` : '—'}</td>
+                      <td className={`px-3 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(2)}
                       </td>
-                      <td className={`px-4 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      <td className={`px-3 py-2 text-right font-mono hidden sm:table-cell ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
                       </td>
-                      <td className="px-4 py-2 text-right">${b.best}</td>
+                      <td className="px-3 py-2 text-right hidden sm:table-cell">${b.best}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -900,21 +902,132 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* ── Poll + Sync Status ── */}
-      <div className="grid grid-cols-2 gap-3">
+      {/* ── Status Row: Poll + Sync + Database ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard
-          label="Poll (every 4 min)"
+          label="Poll"
           value={lastPoll ? fmt(lastPoll.occurred_at) : 'Waiting…'}
-          sub={lastPoll ? `${minutesAgo(lastPoll.occurred_at).toFixed(1)} min ago` : undefined}
+          sub={lastPoll ? `${minutesAgo(lastPoll.occurred_at).toFixed(0)}m ago` : undefined}
           ok={minutesAgo(lastPoll?.occurred_at) < 6}
         />
         <StatCard
-          label="Sync (hourly)"
+          label="Sync"
           value={lastSync ? fmt(lastSync.occurred_at) : 'Waiting…'}
-          sub={lastSync ? `${minutesAgo(lastSync.occurred_at).toFixed(0)} min ago` : undefined}
+          sub={lastSync ? `${minutesAgo(lastSync.occurred_at).toFixed(0)}m ago` : undefined}
           ok={minutesAgo(lastSync?.occurred_at) < 65}
         />
+        <StatCard
+          label="Database"
+          value={`${totalGames.toLocaleString()} games`}
+          sub={latestGameTs ? `Latest: ${fmtDate(latestGameTs)}` : undefined}
+          ok={minutesAgo(latestGameTs) < 10}
+        />
+        <StatCard
+          label="Evolution"
+          value={evoState?.current_generation ? `Gen ${evoState.current_generation}` : 'Not started'}
+          sub={evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
+          ok={!lastEvo || lastEvo.severity !== 'error'}
+          onClick={() => setEvoDetailOpen(o => !o)}
+        />
       </div>
+
+      {/* ── Evolution Generation Breakdown ── */}
+      {evoDetailOpen && (
+        <div className="bg-surface rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
+            <h2 className="font-semibold text-sm">Performance by Generation</h2>
+            <span className="text-xs text-slate-500">{genRows.length} gens</span>
+          </div>
+          {genRows.length === 0 ? (
+            <p className="px-4 py-6 text-slate-500 text-sm">No scored shadow plays yet.</p>
+          ) : (
+            <div className="overflow-x-auto max-h-72">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface z-10">
+                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                    <th className="px-3 py-2 text-left">Gen</th>
+                    <th className="px-3 py-2 text-left">W–L</th>
+                    <th className="px-3 py-2 text-right">Win %</th>
+                    <th className="px-3 py-2 text-right">P&amp;L</th>
+                    <th className="px-3 py-2 text-right">P&amp;L/g</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {genRows.map(([gen, b]) => (
+                    <tr key={gen} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                      <td className="px-3 py-2 font-mono text-slate-300">
+                        {gen}{gen === evoState?.current_generation && <span className="ml-1 text-crimson text-[9px]">NOW</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="text-green-400">{b.wins}W</span>
+                        <span className="text-slate-500 mx-0.5">–</span>
+                        <span className="text-red-400">{b.losses}L</span>
+                      </td>
+                      <td className="px-3 py-2 text-right">{b.total > 0 ? `${((b.wins / b.total) * 100).toFixed(1)}%` : '—'}</td>
+                      <td className={`px-3 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(2)}
+                      </td>
+                      <td className={`px-3 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Biggest Win ── */}
+      <StatCard
+        label="Biggest Win"
+        value={biggestWinResult ? `$${biggestWinResult.prize}` : '—'}
+        sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · Game #${biggestWinResult.game_num}` : 'No wins yet'}
+        onClick={() => setBiggestWinOpen(o => !o)}
+      />
+
+      {/* ── Biggest Win 14-Day History ── */}
+      {biggestWinOpen && (
+        <div className="bg-surface rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
+            <h2 className="font-semibold text-sm">Biggest Win by Day (Last 14 Days)</h2>
+            <span className="text-xs text-slate-500">{biggestWinByDay.length} days</span>
+          </div>
+          {biggestWinByDay.length === 0 ? (
+            <p className="px-4 py-6 text-slate-500 text-sm">No wins recorded yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                    <th className="px-3 py-2 text-left">Date</th>
+                    <th className="px-3 py-2 text-right">Prize</th>
+                    <th className="px-3 py-2 text-center">Spot</th>
+                    <th className="px-3 py-2 text-center hidden sm:table-cell">Matches</th>
+                    <th className="px-3 py-2 text-right hidden sm:table-cell">Game #</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {biggestWinByDay.map(row => (
+                    <tr key={row.date} className={`border-b border-[#1e1e24] hover:bg-[#1e1e24] ${row.date === todayKey ? 'bg-[#16161a]' : ''}`}>
+                      <td className="px-3 py-2 font-mono text-slate-300 whitespace-nowrap">
+                        {row.date}{row.date === todayKey && <span className="ml-1 text-crimson text-[9px]">TODAY</span>}
+                      </td>
+                      <td className={`px-3 py-2 text-right font-bold ${row.prize > 0 ? 'text-green-400' : 'text-slate-500'}`}>
+                        {row.prize > 0 ? `$${row.prize}` : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-center text-slate-400">{row.prize > 0 ? `${row.spotCount}-sp` : '—'}</td>
+                      <td className="px-3 py-2 text-center text-slate-400 hidden sm:table-cell">{row.prize > 0 ? `${row.matches}/${row.spotCount}` : '—'}</td>
+                      <td className="px-3 py-2 text-right font-mono text-slate-500 hidden sm:table-cell">#{row.gameNum}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Live Game Feed ── */}
       <div className="bg-surface rounded-xl overflow-hidden">
@@ -1101,123 +1214,57 @@ export default function MonitorPage() {
         </div>
       </div>
 
-      {/* ── Rolling Performance ── */}
+      {/* ── Rolling Performance (filtered) ── */}
       <div className="bg-surface rounded-xl p-4">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-sm">Rolling Performance (shadow plays)</h2>
-          <span className="text-[10px] text-slate-600">{allLiveResults.length.toLocaleString()} total plays tracked</span>
+          <h2 className="font-semibold text-sm">{filterLabel} Performance</h2>
+          <span className="text-[10px] text-slate-600">{filteredBucket.total.toLocaleString()} plays</span>
         </div>
-        <div className="grid grid-cols-3 divide-x divide-[#2a2a2e] gap-0">
-          {[
-            { label: 'Last 24h', bucket: b24, bySpot: bs24 },
-            { label: 'Last 7 days', bucket: b7d, bySpot: bs7d },
-            { label: 'All time', bucket: bAll, bySpot: bsAll },
-          ].map(col => (
-            <div key={col.label} className="px-4 first:pl-0 last:pr-0">
-              <PerfCol label={col.label} bucket={col.bucket} bySpot={col.bySpot} />
-            </div>
-          ))}
-        </div>
+        <PerfCol label={filterLabel} bucket={filteredBucket} bySpot={filteredBySpot} />
       </div>
 
-      {/* ── Activity Log ── */}
+      {/* ── Activity Log (collapsed) ── */}
       <div className="bg-surface rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
+        <button
+          onClick={() => setActivityLogOpen(o => !o)}
+          className="w-full px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+        >
           <h2 className="font-semibold text-sm">Activity Log</h2>
-          <span className="text-xs text-slate-500">{events.length} events · live</span>
-        </div>
-        <div className="divide-y divide-[#1e1e24] max-h-96 overflow-y-auto">
-          {events.slice(0, eventsPage * 50).map(evt => (
-            <div key={evt.id}>
-              <button
-                className="w-full text-left px-4 py-2 hover:bg-[#1e1e24] flex items-start gap-2"
-                onClick={() => setExpandedEvent(expandedEvent === evt.id ? null : evt.id)}
-              >
-                <span className="shrink-0 mt-0.5">{EVENT_ICONS[evt.severity] ?? '⚪'}</span>
-                <span className="text-[10px] text-slate-500 shrink-0 mt-0.5 font-mono">
-                  {fmt(evt.occurred_at)}
-                </span>
-                <span className="text-xs text-slate-300 text-left">{evt.message}</span>
-              </button>
-              {expandedEvent === evt.id && evt.metadata && (
-                <div className="px-10 pb-2">
-                  <pre className="text-[10px] text-slate-500 bg-[#0e0e10] rounded p-2 overflow-x-auto">
-                    {JSON.stringify(evt.metadata, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </div>
-          ))}
-          {eventsPage * 50 < events.length && (
-            <button
-              className="w-full py-2 text-xs text-slate-500 hover:text-white"
-              onClick={() => setEventsPage(p => p + 1)}
-            >
-              Load more
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* ── Cron Health Validator ── */}
-      <div className="bg-surface rounded-xl p-4">
-        <h2 className="font-semibold text-sm mb-4">Cron Health Validator</h2>
-        <div className="space-y-4">
-          {[
-            {
-              path: '/api/poll',
-              interval: '4 min',
-              threshold: 6,
-              lastEvent: lastPoll,
-            },
-            {
-              path: '/api/sync',
-              interval: '60 min',
-              threshold: 65,
-              lastEvent: lastSync,
-            },
-          ].map(cron => {
-            const ago = minutesAgo(cron.lastEvent?.occurred_at);
-            const healthy = ago < cron.threshold;
-            const url = `https://ke-know.vercel.app${cron.path}`;
-            return (
-              <div key={cron.path} className="bg-[#0e0e10] rounded-xl p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Dot ok={healthy} />
-                  <span className="font-mono text-sm text-white">{cron.path}</span>
-                  <span className="text-xs text-slate-500">— expected every {cron.interval}</span>
-                  <span className={`ml-auto text-xs font-semibold ${healthy ? 'text-green-400' : 'text-amber-400'}`}>
-                    {healthy ? 'Healthy' : 'Overdue'}
+          <span className="text-xs text-slate-500">{events.length} events {activityLogOpen ? '▲' : '▼'}</span>
+        </button>
+        {activityLogOpen && (
+          <div className="divide-y divide-[#1e1e24] max-h-96 overflow-y-auto">
+            {events.slice(0, eventsPage * 50).map(evt => (
+              <div key={evt.id}>
+                <button
+                  className="w-full text-left px-4 py-2 hover:bg-[#1e1e24] flex items-start gap-2"
+                  onClick={() => setExpandedEvent(expandedEvent === evt.id ? null : evt.id)}
+                >
+                  <span className="shrink-0 mt-0.5">{EVENT_ICONS[evt.severity] ?? '⚪'}</span>
+                  <span className="text-[10px] text-slate-500 shrink-0 mt-0.5 font-mono">
+                    {fmt(evt.occurred_at)}
                   </span>
-                </div>
-                {cron.lastEvent && (
-                  <p className="text-xs text-slate-500">
-                    Last called {ago.toFixed(1)} minutes ago ({fmtDate(cron.lastEvent.occurred_at)})
-                  </p>
+                  <span className="text-xs text-slate-300 text-left">{evt.message}</span>
+                </button>
+                {expandedEvent === evt.id && evt.metadata && (
+                  <div className="px-10 pb-2">
+                    <pre className="text-[10px] text-slate-500 bg-[#0e0e10] rounded p-2 overflow-x-auto">
+                      {JSON.stringify(evt.metadata, null, 2)}
+                    </pre>
+                  </div>
                 )}
-                <div className="grid grid-cols-1 gap-2 text-xs font-mono">
-                  {[
-                    { label: 'URL', value: url },
-                    { label: 'Method', value: 'POST' },
-                    { label: 'Header', value: 'Authorization: Bearer YOUR_CRON_SECRET' },
-                    { label: 'Schedule', value: cron.path === '/api/poll' ? 'Every 4 minutes' : 'Every 60 minutes' },
-                  ].map(f => (
-                    <div key={f.label} className="flex items-center gap-2">
-                      <span className="text-slate-600 w-16 shrink-0">{f.label}</span>
-                      <span className="bg-[#16161a] rounded px-2 py-1 text-slate-300 flex-1 truncate">{f.value}</span>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(f.value)}
-                        className="text-slate-500 hover:text-white px-2 py-1 rounded border border-[#333] shrink-0"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  ))}
-                </div>
               </div>
-            );
-          })}
-        </div>
+            ))}
+            {eventsPage * 50 < events.length && (
+              <button
+                className="w-full py-2 text-xs text-slate-500 hover:text-white"
+                onClick={() => setEventsPage(p => p + 1)}
+              >
+                Load more
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

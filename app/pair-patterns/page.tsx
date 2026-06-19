@@ -74,10 +74,10 @@ export default function PairPatternsPage() {
     <div className="space-y-6 max-w-4xl">
       <h1 className="text-2xl font-bold">Pair Patterns</h1>
       <p className="text-sm text-slate-400 leading-relaxed">
-        Which numbers appear together more often than chance? When 20 of 80 numbers are drawn,
-        any two specific numbers have a ~6.01% baseline probability of appearing in the same draw.
-        <strong className="text-slate-300"> Lift</strong> measures the ratio of actual co-occurrence
-        to that baseline — lift 1.20 means they appear together 20% more than random chance would predict.
+        Which numbers show up together more often than expected? With 20 of 80 numbers drawn each game,
+        any two numbers have about a 6% chance of appearing together.
+        The <strong className="text-slate-300">Together Score</strong> shows how often they actually pair up
+        compared to that baseline — a score of 1.20 means they appear together 20% more often than random.
       </p>
 
       {/* ── Number Selector ──────────────────────────────────────────── */}
@@ -155,7 +155,7 @@ export default function PairPatternsPage() {
                   <th className="pb-2 text-right">Together</th>
                   <th className="pb-2 text-right">% of Games</th>
                   <th className="pb-2 text-right">Expected</th>
-                  <th className="pb-2 text-right">Lift</th>
+                  <th className="pb-2 text-right">Score</th>
                 </tr>
               </thead>
               <tbody>
@@ -198,14 +198,14 @@ export default function PairPatternsPage() {
                     : 'bg-[#0e0e10] border border-[#333] text-slate-400 hover:text-white'
                 }`}
               >
-                By {m === 'count' ? 'Frequency' : 'Lift'}
+                By {m === 'count' ? 'Frequency' : 'Score'}
               </button>
             ))}
           </div>
         </div>
         <p className="text-xs text-slate-500">
-          Baseline: any pair expected together ~{expectedStr}× in {games.length.toLocaleString()} draws.
-          Lift &gt; 1.0 = appears together more than chance. Click either number in a pair to explore it.
+          Any pair is expected together ~{expectedStr} times in {games.length.toLocaleString()} draws.
+          Score above 1.0 means they appear together more than chance. Click a number to explore it.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -216,7 +216,7 @@ export default function PairPatternsPage() {
                 <th className="px-3 py-2 text-right">Together</th>
                 <th className="px-3 py-2 text-right">% of Games</th>
                 <th className="px-3 py-2 text-right">Expected</th>
-                <th className="px-3 py-2 text-right">Lift</th>
+                <th className="px-3 py-2 text-right">Score</th>
               </tr>
             </thead>
             <tbody>
