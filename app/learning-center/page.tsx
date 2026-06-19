@@ -1,879 +1,352 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { supabase, Game } from '@/lib/supabase';
-import type { StrategyGenome } from '@/lib/evolution/genome';
-import { computeNumberStats, pickNumbers, Strategy } from '@/lib/analysis';
-import { simulateSession, SimRound } from '@/lib/prediction-engine';
-import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
-import { PRIZE_TABLE } from '@/lib/keno-odds';
-import { generatePicks } from '@/lib/evolution/fitness';
-import { lookupPrize } from '@/lib/keno/prizes';
+import { supabase } from '@/lib/supabase';
 
-interface Champion {
-  id: number;
-  spot_count: number;
-  generation: number;
-  genome: StrategyGenome;
-  fitness_score: number | null;
-}
-
-const CRIMSON = '#8B1A4A';
-const POLL_INTERVAL_MS = 90_000; // check every 90 seconds (Keno draws ~every 4 min)
+const SPOT_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899','#94a3b8','#f1f5f9'];
 
 function fmt(n: number) {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-interface LiveSession {
-  picks: number[];
-  spotCount: number;
-  wager: number;
-  bonusType: 'none' | 'bonus' | 'super';
-  budget: number;
-  gamesTarget: number;
-  startedAt: string;
-  startGameNum: number;
+interface GenRow {
+  generation: number;
+  games: number;
+  wins: number;
+  pnl: number;
+  bestWin: number;
+  champCount: number;
 }
 
-interface LiveRound {
-  gameNum: number;
-  drawDate: string;
-  hits: number[];
-  matches: number;
-  wagered: number;
-  won: number;
-  bankroll: number;
-  checkedAt: string;
+interface SpotPerf {
+  spot: number;
+  games: number;
+  wins: number;
+  pnl: number;
+  ppg: number;
+  bestWin: number;
 }
 
-interface Config {
-  spotCount: number;
-  strategy: Strategy | `champion-${number}`;
-  wager: number;
-  bonusType: 'none' | 'bonus' | 'super';
-  budget: number;
-  gamesTarget: number;
+interface FitnessPoint {
+  generation: number;
+  [key: string]: number;
 }
 
-const DEFAULT_CONFIG: Config = {
-  spotCount: 8,
-  strategy: 'balanced',
-  wager: 2,
-  bonusType: 'none',
-  budget: 100,
-  gamesTarget: 50,
-};
-
-export default function LearningCenterPage() {
-  const [games, setGames] = useState<Game[]>([]);
+export default function SimulatorPage() {
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'live' | 'historical'>('live');
-  const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
-
-  // ── Live session state ─────────────────────────────────────────────────────
-  const [session, setSession] = useState<LiveSession | null>(null);
-  const [liveRounds, setLiveRounds] = useState<LiveRound[]>([]);
-  const [bankroll, setBankroll] = useState(0);
-  const [pollStatus, setPollStatus] = useState<'idle' | 'checking' | 'waiting' | 'new-draw' | 'complete'>('idle');
-  const [countdown, setCountdown] = useState(0);
-  const [lastCheckedNum, setLastCheckedNum] = useState(0);
-  const [sessionEnded, setSessionEnded] = useState(false);
-  const lastCheckedRef = useRef(0);
-  const bankrollRef = useRef(0);
-  const roundsRef = useRef<LiveRound[]>([]);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const logRef = useRef<HTMLDivElement>(null);
-
-  // ── Historical simulation state ────────────────────────────────────────────
-  const [histRounds, setHistRounds] = useState<SimRound[]>([]);
-  const [histRunning, setHistRunning] = useState(false);
-  const [histAnimIdx, setHistAnimIdx] = useState(0);
-  const histIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const histLogRef = useRef<HTMLDivElement>(null);
-  const [histConfig, setHistConfig] = useState<Config>(DEFAULT_CONFIG);
-
-  // ── Champion & replay state ───────────────────────────────────────────────
-  const [champions, setChampions] = useState<Champion[]>([]);
-  const [replayStats, setReplayStats] = useState({ totalResults: 0, lastReplay: '' });
-  const [savingToTraining, setSavingToTraining] = useState(false);
-  const [savedCount, setSavedCount] = useState(0);
-  const [replayTriggering, setReplayTriggering] = useState(false);
+  const [genRows, setGenRows] = useState<GenRow[]>([]);
+  const [spotPerf, setSpotPerf] = useState<SpotPerf[]>([]);
+  const [fitnessData, setFitnessData] = useState<FitnessPoint[]>([]);
+  const [totalResults, setTotalResults] = useState(0);
+  const [totalGames, setTotalGames] = useState(0);
+  const [currentGen, setCurrentGen] = useState(0);
+  const [champCount, setChampCount] = useState(0);
+  const [lastReplay, setLastReplay] = useState('');
+  const [replaying, setReplaying] = useState(false);
+  const [genDetailOpen, setGenDetailOpen] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      supabase.from('games').select('*').order('game_num', { ascending: false }).limit(5000),
-      supabase.from('strategies').select('id, spot_count, generation, genome').eq('status', 'promoted'),
-      supabase.from('live_results').select('id', { count: 'exact', head: true }),
-      supabase.from('system_events').select('occurred_at').eq('event_type', 'simulator_replay').order('occurred_at', { ascending: false }).limit(1),
-    ]).then(([gamesRes, champsRes, countRes, replayEvt]) => {
-      if (gamesRes.data) setGames(gamesRes.data as Game[]);
-      if (champsRes.data) {
-        const champData: Champion[] = [];
-        const stratIds = (champsRes.data as { id: number; spot_count: number; generation: number; genome: Record<string, unknown> }[]);
-        for (const c of stratIds) {
-          champData.push({
-            id: c.id,
-            spot_count: c.spot_count,
-            generation: c.generation,
-            genome: c.genome as unknown as StrategyGenome,
-            fitness_score: null,
-          });
+    async function load() {
+      const [
+        { data: liveResults },
+        { data: strategies },
+        { data: evoState },
+        { count: gamesCount },
+        { data: fitnessRows },
+        { data: replayEvt },
+      ] = await Promise.all([
+        supabase.from('live_results').select('strategy_id, spot_count, prize, pnl, matches').limit(50000),
+        supabase.from('strategies').select('id, generation, spot_count, status'),
+        supabase.from('evolution_state').select('current_generation').eq('id', 1).single(),
+        supabase.from('games').select('game_num', { count: 'exact', head: true }),
+        supabase.from('strategy_results').select('generation, spot_count, fitness_score').order('generation', { ascending: true }).limit(2000),
+        supabase.from('system_events').select('occurred_at').eq('event_type', 'simulator_replay').order('occurred_at', { ascending: false }).limit(1),
+      ]);
+
+      const results = (liveResults ?? []) as { strategy_id: number; spot_count: number; prize: number; pnl: number; matches: number }[];
+      const strats = (strategies ?? []) as { id: number; generation: number; spot_count: number; status: string }[];
+
+      const stratGenMap = new Map<number, number>();
+      for (const s of strats) stratGenMap.set(s.id, s.generation);
+
+      // Per-generation breakdown
+      const genMap = new Map<number, { games: number; wins: number; pnl: number; bestWin: number }>();
+      for (const r of results) {
+        const gen = stratGenMap.get(r.strategy_id) ?? 0;
+        if (gen === 0) continue;
+        const entry = genMap.get(gen) ?? { games: 0, wins: 0, pnl: 0, bestWin: 0 };
+        entry.games++;
+        entry.pnl += r.pnl;
+        if (r.prize > 0) entry.wins++;
+        if (r.prize > entry.bestWin) entry.bestWin = r.prize;
+        genMap.set(gen, entry);
+      }
+
+      const champsByGen = new Map<number, number>();
+      for (const s of strats) {
+        if (s.status === 'promoted') {
+          champsByGen.set(s.generation, (champsByGen.get(s.generation) ?? 0) + 1);
         }
-        setChampions(champData);
       }
-      setReplayStats({
-        totalResults: countRes.count ?? 0,
-        lastReplay: (replayEvt.data?.[0] as { occurred_at?: string } | undefined)?.occurred_at ?? '',
-      });
+
+      const rows: GenRow[] = [...genMap.entries()]
+        .map(([gen, d]) => ({ generation: gen, ...d, champCount: champsByGen.get(gen) ?? 0 }))
+        .sort((a, b) => b.generation - a.generation);
+      setGenRows(rows);
+
+      // Per-spot breakdown
+      const spotMap = new Map<number, { games: number; wins: number; pnl: number; bestWin: number }>();
+      for (const r of results) {
+        const entry = spotMap.get(r.spot_count) ?? { games: 0, wins: 0, pnl: 0, bestWin: 0 };
+        entry.games++;
+        entry.pnl += r.pnl;
+        if (r.prize > 0) entry.wins++;
+        if (r.prize > entry.bestWin) entry.bestWin = r.prize;
+        spotMap.set(r.spot_count, entry);
+      }
+      setSpotPerf([...spotMap.entries()]
+        .map(([spot, d]) => ({ spot, ...d, ppg: d.games > 0 ? d.pnl / d.games : 0 }))
+        .sort((a, b) => a.spot - b.spot));
+
+      // Fitness history chart
+      if (fitnessRows) {
+        const byGen = new Map<number, Map<number, number>>();
+        for (const row of fitnessRows as { generation: number; spot_count: number; fitness_score: number | null }[]) {
+          if (!byGen.has(row.generation)) byGen.set(row.generation, new Map());
+          const gm = byGen.get(row.generation)!;
+          const cur = gm.get(row.spot_count) ?? -999;
+          if ((row.fitness_score ?? -999) > cur) gm.set(row.spot_count, row.fitness_score ?? 0);
+        }
+        const last48 = [...byGen.entries()].sort((a, b) => a[0] - b[0]).slice(-48);
+        setFitnessData(last48.map(([gen, spotMap]) => {
+          const entry: FitnessPoint = { generation: gen };
+          for (const [spot, fit] of spotMap) entry[`s${spot}`] = fit;
+          return entry;
+        }));
+      }
+
+      setTotalResults(results.length);
+      setTotalGames(gamesCount ?? 0);
+      setCurrentGen(evoState?.current_generation ?? 0);
+      setChampCount(strats.filter(s => s.status === 'promoted').length);
+      setLastReplay((replayEvt?.[0] as { occurred_at?: string } | undefined)?.occurred_at ?? '');
       setLoading(false);
-    });
-  }, []);
-
-  // ── Poll logic ─────────────────────────────────────────────────────────────
-  const checkForNewDraw = useCallback(async (sess: LiveSession) => {
-    if (!sess) return;
-    setPollStatus('checking');
-
-    try {
-      const latest = await fetchDrawings(1);
-      if (!latest.length) { setPollStatus('waiting'); return; }
-
-      const latestNum = parseInt(latest[0].drawNumber, 10);
-
-      if (latestNum <= lastCheckedRef.current) {
-        setPollStatus('waiting');
-        return;
-      }
-
-      // New draw found — fetch it (may already be in `latest[0]`)
-      const drawing = latest[0];
-      const hits: number[] = drawing.results?.hits ?? [];
-      const bonusVal: number = drawing.results?.bonus ?? 1;
-      const superBonusVal: number = drawing.results?.superBonus ?? 1;
-
-      const prizeTable = PRIZE_TABLE[sess.spotCount] ?? [];
-      const matches = hits.filter(h => sess.picks.includes(h)).length;
-      const entry = prizeTable.find(p => p.catches === matches);
-      let prize = entry ? entry.prize * sess.wager : 0;
-
-      if (sess.bonusType === 'bonus' && bonusVal > 1) prize *= bonusVal;
-      if (sess.bonusType === 'super' && superBonusVal > 1) prize *= superBonusVal;
-
-      const costPerGame = sess.wager * (sess.bonusType === 'super' ? 3 : sess.bonusType === 'bonus' ? 2 : 1);
-      const prevBankroll = bankrollRef.current;
-      const newBankroll = Math.max(0, prevBankroll - costPerGame + prize);
-
-      const round: LiveRound = {
-        gameNum: latestNum,
-        drawDate: drawing.drawDate,
-        hits,
-        matches,
-        wagered: costPerGame,
-        won: prize,
-        bankroll: newBankroll,
-        checkedAt: new Date().toLocaleTimeString(),
-      };
-
-      bankrollRef.current = newBankroll;
-      roundsRef.current = [round, ...roundsRef.current];
-      lastCheckedRef.current = latestNum;
-
-      setLastCheckedNum(latestNum);
-      setBankroll(newBankroll);
-      setLiveRounds(prev => [round, ...prev]);
-      setPollStatus('new-draw');
-
-      // Also push this game to DB so the rest of the app sees it
-      const parsedRow = parseDrawing(drawing);
-      await supabase.from('games').upsert([parsedRow], { onConflict: 'game_num', ignoreDuplicates: true });
-
-      // Check stop conditions
-      const gamesPlayed = roundsRef.current.length;
-      if (newBankroll <= 0 || gamesPlayed >= sess.gamesTarget) {
-        stopSession();
-        return;
-      }
-
-      setTimeout(() => setPollStatus('waiting'), 2000);
-    } catch (err) {
-      console.error('[live poll]', err);
-      setPollStatus('waiting');
     }
+    load();
   }, []);
 
-  const stopSession = useCallback(() => {
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    pollTimerRef.current = null;
-    countdownRef.current = null;
-    setPollStatus('complete');
-    setSessionEnded(true);
-    setCountdown(0);
-  }, []);
+  if (loading) return <div className="text-slate-500 pt-8">Loading...</div>;
 
-  const startLiveSession = useCallback(async () => {
-    if (!games.length) return;
-
-    let picks: number[];
-    const isChampion = config.strategy.startsWith('champion-');
-    if (isChampion) {
-      const champId = parseInt(config.strategy.split('-')[1], 10);
-      const champ = champions.find(c => c.id === champId);
-      if (!champ) return;
-      picks = generatePicks(champ.genome, config.spotCount, games);
-    } else {
-      const stats = computeNumberStats(games);
-      picks = pickNumbers(stats, config.spotCount, config.strategy as Strategy).map(s => s.number);
-    }
-
-    // Get current latest game
-    const latest = await fetchDrawings(1);
-    const startGameNum = latest.length ? parseInt(latest[0].drawNumber, 10) : 0;
-
-    const sess: LiveSession = {
-      picks,
-      spotCount: config.spotCount,
-      wager: config.wager,
-      bonusType: config.bonusType,
-      budget: config.budget,
-      gamesTarget: config.gamesTarget,
-      startedAt: new Date().toISOString(),
-      startGameNum,
-    };
-
-    lastCheckedRef.current = startGameNum;
-    bankrollRef.current = config.budget;
-    roundsRef.current = [];
-
-    setSession(sess);
-    setLiveRounds([]);
-    setBankroll(config.budget);
-    setLastCheckedNum(startGameNum);
-    setSessionEnded(false);
-    setPollStatus('waiting');
-    setCountdown(POLL_INTERVAL_MS / 1000);
-
-    // Start countdown ticker
-    countdownRef.current = setInterval(() => {
-      setCountdown(prev => Math.max(0, prev - 1));
-    }, 1000);
-
-    // Poll immediately after 5 seconds (in case a draw just happened), then every 90s
-    const firstCheck = setTimeout(() => {
-      checkForNewDraw(sess);
-      // Now start the recurring poll
-      pollTimerRef.current = setInterval(() => {
-        setCountdown(POLL_INTERVAL_MS / 1000);
-        checkForNewDraw(sess);
-      }, POLL_INTERVAL_MS);
-    }, 5000);
-
-    return () => clearTimeout(firstCheck);
-  }, [games, config, champions, checkForNewDraw]);
-
-  const resetLive = useCallback(() => {
-    stopSession();
-    setSession(null);
-    setLiveRounds([]);
-    setBankroll(0);
-    setLastCheckedNum(0);
-    setSessionEnded(false);
-    setPollStatus('idle');
-    roundsRef.current = [];
-    bankrollRef.current = 0;
-    lastCheckedRef.current = 0;
-  }, [stopSession]);
-
-  const checkNow = useCallback(() => {
-    if (!session) return;
-    setCountdown(POLL_INTERVAL_MS / 1000);
-    checkForNewDraw(session);
-  }, [session, checkForNewDraw]);
-
-  useEffect(() => () => {
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    if (countdownRef.current) clearInterval(countdownRef.current);
-  }, []);
-
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = 0;
-  }, [liveRounds.length]);
-
-  // ── Live derived stats ─────────────────────────────────────────────────────
-  const gamesPlayed = liveRounds.length;
-  const totalWagered = liveRounds.reduce((s, r) => s + r.wagered, 0);
-  const totalWon = liveRounds.reduce((s, r) => s + r.won, 0);
-  const wins = liveRounds.filter(r => r.won > 0).length;
-  const roi = totalWagered > 0 ? ((totalWon - totalWagered) / totalWagered) * 100 : 0;
-  const winRate = gamesPlayed > 0 ? (wins / gamesPlayed) * 100 : 0;
-
-  // ── Historical sim ─────────────────────────────────────────────────────────
-  const runHistSim = useCallback(() => {
-    if (!games.length) return;
-    setHistRounds([]);
-    setHistAnimIdx(0);
-    setSavedCount(0);
-
-    const isChampion = histConfig.strategy.startsWith('champion-');
-    let all: SimRound[];
-
-    if (isChampion) {
-      const champId = parseInt(histConfig.strategy.split('-')[1], 10);
-      const champ = champions.find(c => c.id === champId);
-      if (!champ) return;
-      const genome = champ.genome;
-      const spotCount = histConfig.spotCount;
-      const bonusType = histConfig.bonusType;
-      const wagerCost = bonusType === 'super' ? histConfig.wager * 3 : bonusType === 'bonus' ? histConfig.wager * 2 : histConfig.wager;
-      const sorted = [...games].sort((a, b) => a.game_num - b.game_num);
-      const minLookback = Math.max(genome.lookback_games ?? 50, 20);
-      const rounds: SimRound[] = [];
-      let bk = histConfig.budget;
-
-      for (let i = minLookback; i < sorted.length && rounds.length < histConfig.gamesTarget; i++) {
-        if (bk <= 0) break;
-        const context = sorted.slice(0, i);
-        const game = sorted[i];
-        const picks = generatePicks(genome, spotCount, context);
-        const hitSet = new Set(game.hits);
-        let matches = 0;
-        for (const p of picks) if (hitSet.has(p)) matches++;
-        const mult = bonusType === 'bonus' ? (game.bonus ?? 1) : bonusType === 'super' ? (game.super_bonus ?? 1) : 1;
-        const basePrize = lookupPrize(spotCount, matches);
-        const prize = basePrize > 0 ? basePrize * mult * histConfig.wager : 0;
-        bk = bk - wagerCost + prize;
-        rounds.push({ gameNum: game.game_num, drawDate: game.draw_date, picks, hits: game.hits, matches, wagered: wagerCost, won: prize, bankroll: bk });
-      }
-      all = rounds;
-    } else {
-      const stats = computeNumberStats(games);
-      const picks = pickNumbers(stats, histConfig.spotCount, histConfig.strategy as Strategy).map(s => s.number);
-      all = simulateSession(picks, games, histConfig.wager, histConfig.bonusType, histConfig.budget, histConfig.gamesTarget);
-    }
-
-    setHistRunning(true);
-    let idx = 0;
-    histIntervalRef.current = setInterval(() => {
-      idx += 5;
-      if (idx >= all.length) { idx = all.length; clearInterval(histIntervalRef.current!); setHistRunning(false); }
-      setHistAnimIdx(idx);
-      setHistRounds(all.slice(0, idx));
-      setTimeout(() => histLogRef.current?.scrollTo(0, histLogRef.current.scrollHeight), 30);
-    }, 80);
-  }, [games, histConfig, champions]);
-
-  useEffect(() => () => { if (histIntervalRef.current) clearInterval(histIntervalRef.current); }, []);
-
-  if (loading) return <div className="text-slate-500 pt-8">Loading…</div>;
-
-  const prizeTable = PRIZE_TABLE[config.spotCount] ?? [];
-  const livePrizeTable = PRIZE_TABLE[session?.spotCount ?? config.spotCount] ?? [];
+  const totalPnl = genRows.reduce((s, r) => s + r.pnl, 0);
+  const totalWins = genRows.reduce((s, r) => s + r.wins, 0);
+  const totalPlays = genRows.reduce((s, r) => s + r.games, 0);
+  const overallWR = totalPlays > 0 ? ((totalWins / totalPlays) * 100).toFixed(1) : '0.0';
+  const bestSpot = spotPerf.length > 0 ? spotPerf.reduce((best, s) => s.ppg > best.ppg ? s : best, spotPerf[0]) : null;
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="space-y-5 max-w-4xl">
       <div>
-        <h1 className="text-2xl font-bold">Simulator</h1>
+        <h1 className="text-xl sm:text-2xl font-bold">Arthur's Training</h1>
         <p className="text-sm text-slate-400 mt-1">
-          Test strategies against real draws. Results feed into Arthur's evolution engine.
+          How Arthur performs when practicing against the game archive. These results feed directly into his evolution fitness scores.
         </p>
       </div>
 
-      {/* ── Auto-Replay Status ── */}
-      <div className="bg-surface rounded-xl p-4 flex flex-wrap items-center justify-between gap-3 border border-[#2a2a2e]">
+      {/* ── Summary Cards ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-surface rounded-xl p-4">
+          <div className="text-xs text-slate-500 mb-1">Games Practiced</div>
+          <div className="text-xl font-bold">{totalPlays.toLocaleString()}</div>
+          <div className="text-[10px] text-slate-600">of {totalGames.toLocaleString()} in archive</div>
+        </div>
+        <div className="bg-surface rounded-xl p-4">
+          <div className="text-xs text-slate-500 mb-1">Win Rate</div>
+          <div className="text-xl font-bold">{overallWR}%</div>
+          <div className="text-[10px] text-slate-600">{totalWins.toLocaleString()} wins</div>
+        </div>
+        <div className="bg-surface rounded-xl p-4">
+          <div className="text-xs text-slate-500 mb-1">Net P&L</div>
+          <div className={`text-xl font-bold ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {totalPnl >= 0 ? '+' : ''}{fmt(totalPnl)}
+          </div>
+          <div className="text-[10px] text-slate-600">{totalPlays > 0 ? `${(totalPnl / totalPlays).toFixed(3)}/game` : ''}</div>
+        </div>
+        <div className="bg-surface rounded-xl p-4">
+          <div className="text-xs text-slate-500 mb-1">Generation</div>
+          <div className="text-xl font-bold">Gen {currentGen}</div>
+          <div className="text-[10px] text-slate-600">{champCount} active champions</div>
+        </div>
+      </div>
+
+      {/* ── What Arthur Learned ── */}
+      <div className="bg-surface rounded-xl p-4 space-y-3 border border-[#2a2a2e]">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-crimson/10 border border-crimson/20 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-full bg-crimson/10 border border-crimson/20 flex items-center justify-center shrink-0">
             <span className="text-crimson text-xs font-bold">A</span>
           </div>
           <div>
-            <p className="text-sm font-medium text-slate-300">Arthur's Training Data</p>
-            <p className="text-xs text-slate-500">
-              {replayStats.totalResults.toLocaleString()} scored results across {champions.length} champions
-              {replayStats.lastReplay && ` · Last replay ${new Date(replayStats.lastReplay).toLocaleDateString()}`}
-            </p>
+            <p className="text-sm font-medium text-slate-300">What Arthur Has Learned</p>
+            <p className="text-xs text-slate-500">Insights from {totalPlays.toLocaleString()} practice games across {genRows.length} generations</p>
           </div>
+        </div>
+        <div className="space-y-2 text-xs text-slate-400 leading-relaxed">
+          {bestSpot && bestSpot.ppg > 0 && (
+            <p>Best performing spot count: <strong className="text-slate-200">{bestSpot.spot}-spot</strong> at +${bestSpot.ppg.toFixed(3)}/game across {bestSpot.games} games.</p>
+          )}
+          {bestSpot && bestSpot.ppg <= 0 && spotPerf.length > 0 && (
+            <p>No spot count is consistently profitable yet. Closest: <strong className="text-slate-200">{bestSpot.spot}-spot</strong> at ${bestSpot.ppg.toFixed(3)}/game. More evolution cycles will sharpen the edge.</p>
+          )}
+          {genRows.length >= 2 && (() => {
+            const latest = genRows[0];
+            const prev = genRows[1];
+            if (latest && prev && latest.games >= 10 && prev.games >= 10) {
+              const latestPpg = latest.pnl / latest.games;
+              const prevPpg = prev.pnl / prev.games;
+              const improving = latestPpg > prevPpg;
+              return <p>Gen {latest.generation} is {improving ? 'outperforming' : 'trailing'} Gen {prev.generation}: ${latestPpg.toFixed(3)}/game vs ${prevPpg.toFixed(3)}/game. {improving ? 'The strategies are getting sharper.' : 'Variance or a harder stretch of draws.'}</p>;
+            }
+            return null;
+          })()}
+          {totalPlays > 100 && (
+            <p>Across all training, Arthur wins {overallWR}% of games. In Keno, the edge comes from the size of wins, not frequency — rare bigger catches offset many small losses.</p>
+          )}
+        </div>
+      </div>
+
+      {/* ── Spot Performance ── */}
+      {spotPerf.length > 0 && (
+        <div className="bg-surface rounded-xl p-4">
+          <h2 className="font-semibold text-sm mb-3">Performance by Spot Count</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {spotPerf.map(s => (
+              <div key={s.spot} className={`rounded-lg p-3 text-center ${s.ppg > 0 ? 'bg-green-900/15 border border-green-900/30' : 'bg-[#0e0e10] border border-[#1e1e24]'}`}>
+                <div className="text-xs text-slate-500">{s.spot}-spot</div>
+                <div className={`text-sm font-bold ${s.ppg >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {s.ppg >= 0 ? '+' : ''}${s.ppg.toFixed(3)}
+                </div>
+                <div className="text-[10px] text-slate-600">{s.games} games · {s.games > 0 ? ((s.wins / s.games) * 100).toFixed(0) : 0}% wins</div>
+                {s.bestWin > 0 && <div className="text-[10px] text-slate-500 mt-0.5">Best: ${s.bestWin}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Fitness History Chart ── */}
+      {fitnessData.length > 1 && (
+        <div className="bg-surface rounded-xl p-4">
+          <h2 className="font-semibold text-sm mb-3">Fitness Over Generations</h2>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={fitnessData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+              <XAxis dataKey="generation" tick={{ fontSize: 9 }} />
+              <YAxis tick={{ fontSize: 9 }} />
+              <Tooltip
+                contentStyle={{ background: '#16161a', border: '1px solid #333', fontSize: 11 }}
+                formatter={(v: number) => v.toFixed(4)}
+              />
+              {[1,2,3,4,5,6,7,8,9,10].map((s, i) => (
+                <Line key={s} dataKey={`s${s}`} dot={false} strokeWidth={1.5} stroke={SPOT_COLORS[i]} name={`${s}-sp`} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 justify-center">
+            {[1,2,3,4,5,6,7,8,9,10].map((s, i) => (
+              <span key={s} className="text-[9px] flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full inline-block" style={{ background: SPOT_COLORS[i] }} />
+                {s}-sp
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Generation Breakdown ── */}
+      {genRows.length > 0 && (
+        <div className="bg-surface rounded-xl overflow-hidden">
+          <button
+            onClick={() => setGenDetailOpen(o => !o)}
+            className="w-full px-4 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+          >
+            <h2 className="font-semibold text-sm">Performance by Generation</h2>
+            <span className="text-xs text-slate-500">{genRows.length} gens {genDetailOpen ? '▲' : '▼'}</span>
+          </button>
+          {genDetailOpen && (
+            <div className="overflow-x-auto max-h-[400px] overflow-y-auto border-t border-[#2a2a2e]">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface z-10">
+                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                    <th className="px-3 py-2 text-left">Gen</th>
+                    <th className="px-3 py-2 text-left">Games</th>
+                    <th className="px-3 py-2 text-left">W–L</th>
+                    <th className="px-3 py-2 text-right">Win %</th>
+                    <th className="px-3 py-2 text-right">P&L</th>
+                    <th className="px-3 py-2 text-right">P&L/g</th>
+                    <th className="px-3 py-2 text-right">Best</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {genRows.map(r => (
+                    <tr key={r.generation} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                      <td className="px-3 py-2 font-mono text-slate-300">
+                        {r.generation}
+                        {r.generation === currentGen && <span className="ml-1 text-crimson text-[9px]">NOW</span>}
+                        {r.champCount > 0 && <span className="ml-1 text-amber-400 text-[9px]">{r.champCount} champs</span>}
+                      </td>
+                      <td className="px-3 py-2 text-slate-400">{r.games}</td>
+                      <td className="px-3 py-2">
+                        <span className="text-green-400">{r.wins}W</span>
+                        <span className="text-slate-500 mx-0.5">–</span>
+                        <span className="text-red-400">{r.games - r.wins}L</span>
+                      </td>
+                      <td className="px-3 py-2 text-right">{r.games > 0 ? ((r.wins / r.games) * 100).toFixed(1) : '—'}%</td>
+                      <td className={`px-3 py-2 text-right font-mono ${r.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {r.pnl >= 0 ? '+' : ''}{fmt(r.pnl)}
+                      </td>
+                      <td className={`px-3 py-2 text-right font-mono ${r.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${r.games > 0 ? (r.pnl / r.games).toFixed(3) : '0.000'}
+                      </td>
+                      <td className="px-3 py-2 text-right">{r.bestWin > 0 ? `$${r.bestWin}` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Replay Controls ── */}
+      <div className="bg-surface rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-slate-300">Background Training</p>
+          <p className="text-xs text-slate-500">
+            Arthur automatically replays against archived games during each sync.
+            {lastReplay && ` Last run: ${new Date(lastReplay).toLocaleDateString()}.`}
+            {' '}{totalResults.toLocaleString()} total training results.
+          </p>
         </div>
         <button
           onClick={async () => {
-            setReplayTriggering(true);
+            setReplaying(true);
             try {
               const res = await fetch('/api/simulate', { method: 'POST', headers: { 'x-internal': '1' } });
               const data = await res.json();
-              if (data.ok) {
-                setReplayStats(prev => ({
-                  totalResults: prev.totalResults + (data.totalNew ?? 0),
-                  lastReplay: new Date().toISOString(),
-                }));
+              if (data.ok && data.totalNew > 0) {
+                setTotalResults(prev => prev + data.totalNew);
+                setLastReplay(new Date().toISOString());
               }
             } catch { /* best-effort */ }
-            setReplayTriggering(false);
+            setReplaying(false);
           }}
-          disabled={replayTriggering || champions.length === 0}
-          className="px-4 py-2 rounded-lg bg-[#1e1e24] border border-[#333] hover:border-crimson/50 text-xs text-slate-300 disabled:opacity-50 transition-colors"
+          disabled={replaying || champCount === 0}
+          className="px-4 py-2 rounded-lg bg-crimson hover:bg-[#a01f57] disabled:opacity-50 text-white text-sm font-medium transition-colors"
         >
-          {replayTriggering ? 'Replaying…' : 'Replay Now'}
+          {replaying ? 'Training…' : 'Train Now'}
         </button>
       </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 bg-[#0e0e10] rounded-lg p-1 w-fit">
-        {(['live', 'historical'] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
-              tab === t ? 'bg-crimson text-white' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            {t === 'live' ? '⚡ Live Session' : '📊 Historical Test'}
-          </button>
-        ))}
-      </div>
-
-      {/* ── LIVE TAB ─────────────────────────────────────────────────────────── */}
-      {tab === 'live' && (
-        <>
-          {!session ? (
-            /* Config Panel */
-            <div className="bg-surface rounded-xl p-5 space-y-5">
-              <div>
-                <h2 className="font-semibold">Live Session Setup</h2>
-                <p className="text-xs text-slate-500 mt-1">
-                  The app will check for each new Keno draw (every ~4 minutes) and play your picks automatically.
-                  Draws are checked every 90 seconds. Session runs until budget is exhausted or game count is reached.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Spots to Pick (1–10)</label>
-                  <input type="number" min={1} max={10} value={config.spotCount}
-                    onChange={e => setConfig(c => ({ ...c, spotCount: Math.min(10, Math.max(1, +e.target.value || 1)) }))}
-                    className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none focus:border-crimson"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Pick Strategy</label>
-                  <select value={config.strategy}
-                    onChange={e => setConfig(c => ({ ...c, strategy: e.target.value as Config['strategy'] }))}
-                    className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none"
-                  >
-                    <optgroup label="Simple Strategies">
-                      <option value="balanced">Balanced (Composite Score)</option>
-                      <option value="hot">Hot Numbers</option>
-                      <option value="cold">Cold Numbers</option>
-                      <option value="streak">On Streak</option>
-                    </optgroup>
-                    {champions.length > 0 && (
-                      <optgroup label="Arthur's Champions">
-                        {champions.map(c => (
-                          <option key={c.id} value={`champion-${c.id}`}>
-                            Champion {c.spot_count}-spot (Gen {c.generation})
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Wager per Game ($1–$20)</label>
-                  <input type="number" min={1} max={20} value={config.wager}
-                    onChange={e => setConfig(c => ({ ...c, wager: Math.min(20, Math.max(1, +e.target.value || 1)) }))}
-                    className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none focus:border-crimson"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Bonus Type</label>
-                  <select value={config.bonusType}
-                    onChange={e => setConfig(c => ({ ...c, bonusType: e.target.value as Config['bonusType'] }))}
-                    className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none"
-                  >
-                    <option value="none">None (1× cost)</option>
-                    <option value="bonus">Bonus (2× cost)</option>
-                    <option value="super">Super Bonus (3× cost)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Starting Budget ($)</label>
-                  <input type="number" min={10} step={10} value={config.budget}
-                    onChange={e => setConfig(c => ({ ...c, budget: Math.max(10, +e.target.value || 100) }))}
-                    className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none focus:border-crimson"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Max Games to Play</label>
-                  <input type="number" min={1} max={500} value={config.gamesTarget}
-                    onChange={e => setConfig(c => ({ ...c, gamesTarget: Math.min(500, Math.max(1, +e.target.value || 50)) }))}
-                    className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none focus:border-crimson"
-                  />
-                </div>
-              </div>
-
-              <button onClick={startLiveSession} disabled={!games.length}
-                className="px-6 py-2.5 rounded-lg bg-crimson hover:bg-[#a01f57] disabled:opacity-50 text-white font-semibold transition-colors">
-                Start Live Session
-              </button>
-            </div>
-          ) : (
-            /* Active Session */
-            <>
-              {/* Status bar */}
-              <div className={`rounded-xl p-4 border flex flex-wrap items-center justify-between gap-4 ${
-                pollStatus === 'new-draw' ? 'bg-green-900/20 border-green-700' :
-                pollStatus === 'checking' ? 'bg-blue-900/20 border-blue-700' :
-                pollStatus === 'complete' ? 'bg-[#1e1e24] border-[#333]' :
-                'bg-surface border-[#2a2a2e]'
-              }`}>
-                <div className="flex items-center gap-3">
-                  {pollStatus === 'checking' && (
-                    <span className="animate-spin text-blue-400 text-lg">↻</span>
-                  )}
-                  {pollStatus === 'new-draw' && (
-                    <span className="text-green-400 text-lg">✓</span>
-                  )}
-                  {pollStatus === 'waiting' && (
-                    <span className="text-crimson text-lg">⏱</span>
-                  )}
-                  {pollStatus === 'complete' && (
-                    <span className="text-slate-400 text-lg">■</span>
-                  )}
-                  <div>
-                    <div className="text-sm font-semibold">
-                      {pollStatus === 'checking' && 'Checking for new draw…'}
-                      {pollStatus === 'new-draw' && `New draw #${lastCheckedNum} found!`}
-                      {pollStatus === 'waiting' && `Waiting for next draw — next check in ${countdown}s`}
-                      {pollStatus === 'complete' && 'Session complete'}
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      Last checked draw: #{lastCheckedNum || session.startGameNum} · Started: {new Date(session.startedAt).toLocaleTimeString()}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  {!sessionEnded && (
-                    <>
-                      <button onClick={checkNow}
-                        className="px-3 py-1.5 text-xs rounded bg-[#1e1e24] hover:bg-[#2a2a2e] text-slate-300 border border-[#333] transition-colors">
-                        Check Now
-                      </button>
-                      <button onClick={stopSession}
-                        className="px-3 py-1.5 text-xs rounded bg-red-900/40 hover:bg-red-900/60 text-red-300 border border-red-900 transition-colors">
-                        Stop Session
-                      </button>
-                    </>
-                  )}
-                  {sessionEnded && (
-                    <button onClick={resetLive}
-                      className="px-3 py-1.5 text-xs rounded bg-crimson text-white transition-colors">
-                      New Session
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Current Picks */}
-              <div className="bg-surface rounded-xl p-4">
-                <h2 className="text-sm font-semibold mb-3 text-slate-300">
-                  Active Picks — {session.spotCount} spots · ${session.wager}/game{session.bonusType !== 'none' ? ` + ${session.bonusType}` : ''}
-                </h2>
-                <div className="flex flex-wrap gap-2">
-                  {session.picks.sort((a, b) => a - b).map(n => {
-                    const lastRound = liveRounds[0];
-                    const wasHit = lastRound?.hits.includes(n);
-                    const wasPicked = lastRound?.hits && session.picks.includes(n) && wasHit;
-                    return (
-                      <div key={n}
-                        className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold transition-all ${
-                          lastRound && lastRound.hits.includes(n) && session.picks.includes(n)
-                            ? 'bg-green-600 text-white scale-110'
-                            : lastRound
-                            ? 'bg-[#1e1e24] text-slate-500'
-                            : 'bg-crimson text-white'
-                        }`}
-                      >
-                        {n}
-                      </div>
-                    );
-                  })}
-                </div>
-                {liveRounds[0] && (
-                  <p className="text-xs text-slate-500 mt-2">
-                    Last draw #{liveRounds[0].gameNum}: {liveRounds[0].matches}/{session.spotCount} matched
-                    {liveRounds[0].won > 0 ? ` — won ${fmt(liveRounds[0].won)}` : ' — no prize'}
-                    {' '}· Green = matched in last draw
-                  </p>
-                )}
-              </div>
-
-              {/* Live Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {[
-                  { label: 'Bankroll', value: fmt(bankroll), accent: bankroll >= session.budget ? 'text-green-400' : 'text-red-400' },
-                  { label: 'ROI', value: `${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%`, accent: roi >= 0 ? 'text-green-400' : 'text-red-400' },
-                  { label: 'Win Rate', value: `${winRate.toFixed(1)}%`, accent: 'text-white' },
-                  { label: 'Games', value: `${gamesPlayed} / ${session.gamesTarget}`, accent: 'text-white' },
-                ].map(({ label, value, accent }) => (
-                  <div key={label} className="bg-surface rounded-xl p-4">
-                    <div className="text-xs text-slate-500 mb-1">{label}</div>
-                    <div className={`text-xl font-bold ${accent}`}>{value}</div>
-                  </div>
-                ))}
-                {[
-                  { label: 'Total Wagered', value: fmt(totalWagered) },
-                  { label: 'Total Won', value: fmt(totalWon) },
-                  { label: 'Net P&L', value: fmt(totalWon - totalWagered) },
-                  { label: 'Best Win', value: liveRounds.length ? fmt(Math.max(...liveRounds.map(r => r.won))) : '—' },
-                ].map(({ label, value }) => (
-                  <div key={label} className="bg-surface rounded-xl p-4">
-                    <div className="text-xs text-slate-500 mb-1">{label}</div>
-                    <div className="text-lg font-semibold">{value}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Bankroll chart */}
-              {liveRounds.length > 1 && (
-                <div className="bg-surface rounded-xl p-4">
-                  <h2 className="text-sm font-semibold mb-3 text-slate-300">Bankroll Over Time</h2>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <LineChart data={[...liveRounds].reverse().map((r, i) => ({ game: i + 1, bankroll: r.bankroll }))}>
-                      <XAxis dataKey="game" tick={{ fill: '#64748b', fontSize: 10 }} />
-                      <YAxis tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `$${v}`} />
-                      <Tooltip contentStyle={{ background: '#16161a', border: '1px solid #333', borderRadius: 8 }}
-                        formatter={(v: number) => [fmt(v), 'Bankroll']} labelFormatter={v => `Game ${v}`} />
-                      <ReferenceLine y={session.budget} stroke="#4a4a5a" strokeDasharray="4 2" />
-                      <Line type="monotone" dataKey="bankroll" stroke={CRIMSON} dot={false} strokeWidth={2} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-
-              {/* Round log */}
-              <div className="bg-surface rounded-xl p-4">
-                <h2 className="text-sm font-semibold mb-3 text-slate-300">Draw Results</h2>
-                {liveRounds.length === 0 ? (
-                  <div className="text-center py-8 text-slate-500 text-sm">
-                    Waiting for the next Keno draw… (checked every 90 seconds)
-                    <br />
-                    <span className="text-xs">Maryland Keno draws approximately every 4 minutes.</span>
-                  </div>
-                ) : (
-                  <div ref={logRef} className="space-y-1 max-h-64 overflow-y-auto">
-                    {liveRounds.map((r, i) => (
-                      <div key={i}
-                        className={`flex flex-wrap gap-3 items-center py-1.5 px-3 rounded text-xs ${r.won > 0 ? 'bg-green-900/15' : 'bg-[#0e0e10]'}`}
-                      >
-                        <span className="text-slate-500 font-mono w-16">#{r.gameNum}</span>
-                        <span className="text-slate-400">{r.drawDate}</span>
-                        <span className="text-slate-300">{r.matches}/{session.spotCount} matched</span>
-                        {r.won > 0
-                          ? <span className="text-green-400 font-semibold">+{fmt(r.won)}</span>
-                          : <span className="text-slate-600">no prize</span>
-                        }
-                        <span className={`ml-auto font-mono ${r.bankroll >= session.budget ? 'text-green-400' : 'text-slate-400'}`}>
-                          {fmt(r.bankroll)}
-                        </span>
-                        <span className="text-slate-600">{r.checkedAt}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Session ended summary */}
-              {sessionEnded && liveRounds.length > 0 && (
-                <div className={`rounded-xl p-5 border ${roi >= 0 ? 'bg-green-900/10 border-green-800' : 'bg-red-900/10 border-red-900'}`}>
-                  <h2 className={`font-semibold ${roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    Live Session Complete — {roi >= 0 ? 'Profitable' : 'Net Loss'}
-                  </h2>
-                  <p className="text-sm text-slate-300 mt-2">
-                    Played <strong>{gamesPlayed} live draws</strong> with real Keno results.
-                    Wagered <strong>{fmt(totalWagered)}</strong>, won back <strong>{fmt(totalWon)}</strong>.
-                    Net: <strong className={roi >= 0 ? 'text-green-400' : 'text-red-400'}>
-                      {roi >= 0 ? '+' : ''}{fmt(totalWon - totalWagered)}
-                    </strong> ({roi >= 0 ? '+' : ''}{roi.toFixed(1)}% ROI).
-                  </p>
-                </div>
-              )}
-            </>
-          )}
-        </>
-      )}
-
-      {/* ── HISTORICAL TAB ──────────────────────────────────────────────────── */}
-      {tab === 'historical' && (
-        <>
-          <div className="bg-surface rounded-xl p-4 text-xs text-blue-400 border border-blue-900/40 rounded-xl">
-            Historical mode simulates picks against draws already in your database — useful for backtesting strategies quickly without waiting for real draws.
-          </div>
-
-          <div className="bg-surface rounded-xl p-5 space-y-4">
-            <h2 className="font-semibold">Backtest Configuration</h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {[
-                { label: 'Spots', key: 'spotCount', min: 1, max: 10 },
-                { label: 'Wager ($)', key: 'wager', min: 1, max: 20 },
-                { label: 'Budget ($)', key: 'budget', min: 10, max: 10000, step: 10 },
-                { label: 'Games', key: 'gamesTarget', min: 10, max: 1000, step: 10 },
-              ].map(({ label, key, min, max, step }) => (
-                <div key={key}>
-                  <label className="text-xs text-slate-400 block mb-1">{label}</label>
-                  <input type="number" min={min} max={max} step={step ?? 1}
-                    value={histConfig[key as keyof Config] as number}
-                    onChange={e => setHistConfig(c => ({ ...c, [key]: +e.target.value }))}
-                    className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none focus:border-crimson"
-                    disabled={histRunning}
-                  />
-                </div>
-              ))}
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">Strategy</label>
-                <select value={histConfig.strategy}
-                  onChange={e => setHistConfig(c => ({ ...c, strategy: e.target.value as Config['strategy'] }))}
-                  className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none"
-                  disabled={histRunning}
-                >
-                  <optgroup label="Simple">
-                    <option value="balanced">Balanced</option>
-                    <option value="hot">Hot</option>
-                    <option value="cold">Cold</option>
-                    <option value="streak">Streak</option>
-                  </optgroup>
-                  {champions.length > 0 && (
-                    <optgroup label="Champions">
-                      {champions.map(c => (
-                        <option key={c.id} value={`champion-${c.id}`}>
-                          Champion {c.spot_count}-sp (Gen {c.generation})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">Bonus</label>
-                <select value={histConfig.bonusType}
-                  onChange={e => setHistConfig(c => ({ ...c, bonusType: e.target.value as Config['bonusType'] }))}
-                  className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none"
-                  disabled={histRunning}
-                >
-                  <option value="none">None</option>
-                  <option value="bonus">Bonus</option>
-                  <option value="super">Super Bonus</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={runHistSim} disabled={histRunning || !games.length}
-                className="px-5 py-2 rounded-lg bg-crimson hover:bg-[#a01f57] disabled:opacity-50 text-white text-sm font-semibold">
-                {histRunning ? `Running… (${histAnimIdx})` : 'Run Backtest'}
-              </button>
-              {histRounds.length > 0 && !histRunning && (
-                <>
-                  <button onClick={() => { setHistRounds([]); setHistAnimIdx(0); setSavedCount(0); }}
-                    className="px-4 py-2 rounded-lg bg-[#2a2a2e] text-white text-sm">Reset</button>
-                  {histConfig.strategy.startsWith('champion-') && savedCount === 0 && (
-                    <button
-                      disabled={savingToTraining}
-                      onClick={async () => {
-                        setSavingToTraining(true);
-                        const champId = parseInt(histConfig.strategy.split('-')[1], 10);
-                        const champ = champions.find(c => c.id === champId);
-                        if (!champ) { setSavingToTraining(false); return; }
-                        const genome = champ.genome;
-                        const bonusType = genome.bonus_type ?? 'none';
-                        const rows = histRounds.map(r => ({
-                          strategy_id: champId,
-                          game_num: r.gameNum,
-                          spot_count: histConfig.spotCount,
-                          picks: r.picks,
-                          actual_hits: r.hits,
-                          matches: r.matches,
-                          prize: r.won,
-                          pnl: r.won - r.wagered,
-                          is_shadow_play: true,
-                          bonus_type: bonusType,
-                          bonus_multiplier: 1,
-                        }));
-                        let saved = 0;
-                        for (let i = 0; i < rows.length; i += 100) {
-                          const batch = rows.slice(i, i + 100);
-                          const { data } = await supabase.from('live_results').upsert(batch, {
-                            onConflict: 'strategy_id,game_num',
-                            ignoreDuplicates: true,
-                          }).select('id');
-                          saved += data?.length ?? 0;
-                        }
-                        setSavedCount(saved);
-                        setReplayStats(prev => ({ ...prev, totalResults: prev.totalResults + saved }));
-                        setSavingToTraining(false);
-                      }}
-                      className="px-4 py-2 rounded-lg bg-green-900/40 border border-green-700/40 text-green-400 text-sm hover:bg-green-900/60 disabled:opacity-50 transition-colors"
-                    >
-                      {savingToTraining ? 'Saving…' : "Save to Arthur's Training"}
-                    </button>
-                  )}
-                  {savedCount > 0 && (
-                    <span className="text-xs text-green-400">Added {savedCount} results to training data</span>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          {histRounds.length > 0 && (() => {
-            const hw = histRounds.reduce((s, r) => s + r.won, 0);
-            const hc = histRounds.reduce((s, r) => s + r.wagered, 0);
-            const hroi = hc > 0 ? ((hw - hc) / hc) * 100 : 0;
-            const hbk = histRounds[histRounds.length - 1]?.bankroll ?? histConfig.budget;
-            return (
-              <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {[
-                    { label: 'Final Bankroll', value: fmt(hbk), accent: hbk >= histConfig.budget ? 'text-green-400' : 'text-red-400' },
-                    { label: 'ROI', value: `${hroi >= 0 ? '+' : ''}${hroi.toFixed(1)}%`, accent: hroi >= 0 ? 'text-green-400' : 'text-red-400' },
-                    { label: 'Win Rate', value: `${(histRounds.filter(r => r.won > 0).length / histRounds.length * 100).toFixed(1)}%`, accent: 'text-white' },
-                    { label: 'Games Played', value: histRounds.length.toString(), accent: 'text-white' },
-                  ].map(({ label, value, accent }) => (
-                    <div key={label} className="bg-surface rounded-xl p-4">
-                      <div className="text-xs text-slate-500 mb-1">{label}</div>
-                      <div className={`text-xl font-bold ${accent}`}>{value}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="bg-surface rounded-xl p-4">
-                  <h2 className="text-sm font-semibold mb-3 text-slate-300">Bankroll Curve</h2>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <LineChart data={histRounds.filter((_, i) => i % Math.max(1, Math.ceil(histRounds.length / 200)) === 0).map((r, i) => ({ game: i + 1, bankroll: r.bankroll }))}>
-                      <XAxis dataKey="game" tick={{ fill: '#64748b', fontSize: 10 }} />
-                      <YAxis tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => `$${v}`} />
-                      <Tooltip contentStyle={{ background: '#16161a', border: '1px solid #333', borderRadius: 8 }}
-                        formatter={(v: number) => [fmt(v), 'Bankroll']} />
-                      <ReferenceLine y={histConfig.budget} stroke="#4a4a5a" strokeDasharray="4 2" />
-                      <Line type="monotone" dataKey="bankroll" stroke={CRIMSON} dot={false} strokeWidth={2} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="bg-surface rounded-xl p-4">
-                  <h2 className="text-sm font-semibold mb-3 text-slate-300">Last 50 Rounds</h2>
-                  <div ref={histLogRef} className="space-y-0.5 max-h-48 overflow-y-auto text-xs">
-                    {[...histRounds].reverse().slice(0, 50).map((r, i) => (
-                      <div key={i} className={`flex justify-between py-0.5 px-2 rounded ${r.won > 0 ? 'bg-green-900/15' : ''}`}>
-                        <span className="text-slate-500 font-mono">#{r.gameNum}</span>
-                        <span className="text-slate-400">{r.matches}/{histConfig.spotCount} hit</span>
-                        {r.won > 0 ? <span className="text-green-400">+{fmt(r.won)}</span> : <span className="text-slate-600">—</span>}
-                        <span className="font-mono text-slate-400">{fmt(r.bankroll)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            );
-          })()}
-        </>
-      )}
     </div>
   );
 }

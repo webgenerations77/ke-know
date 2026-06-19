@@ -904,20 +904,8 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* ── Status Row: Poll + Sync + Database ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard
-          label="Poll"
-          value={lastPoll ? fmt(lastPoll.occurred_at) : 'Waiting…'}
-          sub={lastPoll ? `${minutesAgo(lastPoll.occurred_at).toFixed(0)}m ago` : undefined}
-          ok={minutesAgo(lastPoll?.occurred_at) < 6}
-        />
-        <StatCard
-          label="Sync"
-          value={lastSync ? fmt(lastSync.occurred_at) : 'Waiting…'}
-          sub={lastSync ? `${minutesAgo(lastSync.occurred_at).toFixed(0)}m ago` : undefined}
-          ok={minutesAgo(lastSync?.occurred_at) < 65}
-        />
+      {/* ── Database + Evolution ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <StatCard
           label="Database"
           value={`${totalGames.toLocaleString()} games`}
