@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase-server';
 import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
 import { runEvolution } from '@/lib/evolution/evolve';
 import { scorePendingPredictions } from '@/lib/score-predictions';
+import { replayChampions } from '@/lib/replay';
 
 export interface SyncResult {
   gamesAdded: number;
@@ -85,7 +86,24 @@ export async function performSync(db: ReturnType<typeof createServiceClient>): P
     // Live Monitor feed) and real_world_plays/pnl would miss them.
     const scoredCount = await scorePendingPredictions(db);
 
-    // ---- 3. Run evolution ----
+    // ---- 3. Replay champions against games they missed ----
+    let replayCount = 0;
+    try {
+      const replayResult = await replayChampions(db);
+      replayCount = replayResult.totalNew;
+      if (replayCount > 0) {
+        await db.from('system_events').insert({
+          event_type: 'simulator_replay',
+          severity: 'info',
+          message: `Simulator: ${replayCount} new results across ${replayResult.championsProcessed} champions`,
+          metadata: replayResult,
+        });
+      }
+    } catch (replayErr) {
+      console.error('[sync/replay]', replayErr instanceof Error ? replayErr.message : String(replayErr));
+    }
+
+    // ---- 4. Run evolution ----
     let evolutionRan = false;
     let evolutionResult: object = {};
 
@@ -106,7 +124,7 @@ export async function performSync(db: ReturnType<typeof createServiceClient>): P
       } catch { /* best-effort logging */ }
     }
 
-    return { gamesAdded: totalAdded, predictionsScored: scoredCount, evolutionRan, ...evolutionResult };
+    return { gamesAdded: totalAdded, predictionsScored: scoredCount, replayResults: replayCount, evolutionRan, ...evolutionResult };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[sync]', msg);

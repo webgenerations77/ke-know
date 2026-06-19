@@ -5,10 +5,21 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 import { supabase, Game } from '@/lib/supabase';
+import type { StrategyGenome } from '@/lib/evolution/genome';
 import { computeNumberStats, pickNumbers, Strategy } from '@/lib/analysis';
 import { simulateSession, SimRound } from '@/lib/prediction-engine';
 import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
 import { PRIZE_TABLE } from '@/lib/keno-odds';
+import { generatePicks } from '@/lib/evolution/fitness';
+import { lookupPrize } from '@/lib/keno/prizes';
+
+interface Champion {
+  id: number;
+  spot_count: number;
+  generation: number;
+  genome: StrategyGenome;
+  fitness_score: number | null;
+}
 
 const CRIMSON = '#8B1A4A';
 const POLL_INTERVAL_MS = 90_000; // check every 90 seconds (Keno draws ~every 4 min)
@@ -41,7 +52,7 @@ interface LiveRound {
 
 interface Config {
   spotCount: number;
-  strategy: Strategy;
+  strategy: Strategy | `champion-${number}`;
   wager: number;
   bonusType: 'none' | 'bonus' | 'super';
   budget: number;
@@ -86,9 +97,41 @@ export default function LearningCenterPage() {
   const histLogRef = useRef<HTMLDivElement>(null);
   const [histConfig, setHistConfig] = useState<Config>(DEFAULT_CONFIG);
 
+  // ── Champion & replay state ───────────────────────────────────────────────
+  const [champions, setChampions] = useState<Champion[]>([]);
+  const [replayStats, setReplayStats] = useState({ totalResults: 0, lastReplay: '' });
+  const [savingToTraining, setSavingToTraining] = useState(false);
+  const [savedCount, setSavedCount] = useState(0);
+  const [replayTriggering, setReplayTriggering] = useState(false);
+
   useEffect(() => {
-    supabase.from('games').select('*').order('game_num', { ascending: false }).limit(5000)
-      .then(({ data }) => { if (data) setGames(data as Game[]); setLoading(false); });
+    Promise.all([
+      supabase.from('games').select('*').order('game_num', { ascending: false }).limit(5000),
+      supabase.from('strategies').select('id, spot_count, generation, genome').eq('status', 'promoted'),
+      supabase.from('live_results').select('id', { count: 'exact', head: true }),
+      supabase.from('system_events').select('occurred_at').eq('event_type', 'simulator_replay').order('occurred_at', { ascending: false }).limit(1),
+    ]).then(([gamesRes, champsRes, countRes, replayEvt]) => {
+      if (gamesRes.data) setGames(gamesRes.data as Game[]);
+      if (champsRes.data) {
+        const champData: Champion[] = [];
+        const stratIds = (champsRes.data as { id: number; spot_count: number; generation: number; genome: Record<string, unknown> }[]);
+        for (const c of stratIds) {
+          champData.push({
+            id: c.id,
+            spot_count: c.spot_count,
+            generation: c.generation,
+            genome: c.genome as unknown as StrategyGenome,
+            fitness_score: null,
+          });
+        }
+        setChampions(champData);
+      }
+      setReplayStats({
+        totalResults: countRes.count ?? 0,
+        lastReplay: (replayEvt.data?.[0] as { occurred_at?: string } | undefined)?.occurred_at ?? '',
+      });
+      setLoading(false);
+    });
   }, []);
 
   // ── Poll logic ─────────────────────────────────────────────────────────────
@@ -176,9 +219,17 @@ export default function LearningCenterPage() {
   const startLiveSession = useCallback(async () => {
     if (!games.length) return;
 
-    // Generate picks from current stats
-    const stats = computeNumberStats(games);
-    const picks = pickNumbers(stats, config.spotCount, config.strategy).map(s => s.number);
+    let picks: number[];
+    const isChampion = config.strategy.startsWith('champion-');
+    if (isChampion) {
+      const champId = parseInt(config.strategy.split('-')[1], 10);
+      const champ = champions.find(c => c.id === champId);
+      if (!champ) return;
+      picks = generatePicks(champ.genome, config.spotCount, games);
+    } else {
+      const stats = computeNumberStats(games);
+      picks = pickNumbers(stats, config.spotCount, config.strategy as Strategy).map(s => s.number);
+    }
 
     // Get current latest game
     const latest = await fetchDrawings(1);
@@ -223,7 +274,7 @@ export default function LearningCenterPage() {
     }, 5000);
 
     return () => clearTimeout(firstCheck);
-  }, [games, config, checkForNewDraw]);
+  }, [games, config, champions, checkForNewDraw]);
 
   const resetLive = useCallback(() => {
     stopSession();
@@ -266,9 +317,45 @@ export default function LearningCenterPage() {
     if (!games.length) return;
     setHistRounds([]);
     setHistAnimIdx(0);
-    const stats = computeNumberStats(games);
-    const picks = pickNumbers(stats, histConfig.spotCount, histConfig.strategy).map(s => s.number);
-    const all = simulateSession(picks, games, histConfig.wager, histConfig.bonusType, histConfig.budget, histConfig.gamesTarget);
+    setSavedCount(0);
+
+    const isChampion = histConfig.strategy.startsWith('champion-');
+    let all: SimRound[];
+
+    if (isChampion) {
+      const champId = parseInt(histConfig.strategy.split('-')[1], 10);
+      const champ = champions.find(c => c.id === champId);
+      if (!champ) return;
+      const genome = champ.genome;
+      const spotCount = histConfig.spotCount;
+      const bonusType = histConfig.bonusType;
+      const wagerCost = bonusType === 'super' ? histConfig.wager * 3 : bonusType === 'bonus' ? histConfig.wager * 2 : histConfig.wager;
+      const sorted = [...games].sort((a, b) => a.game_num - b.game_num);
+      const minLookback = Math.max(genome.lookback_games ?? 50, 20);
+      const rounds: SimRound[] = [];
+      let bk = histConfig.budget;
+
+      for (let i = minLookback; i < sorted.length && rounds.length < histConfig.gamesTarget; i++) {
+        if (bk <= 0) break;
+        const context = sorted.slice(0, i);
+        const game = sorted[i];
+        const picks = generatePicks(genome, spotCount, context);
+        const hitSet = new Set(game.hits);
+        let matches = 0;
+        for (const p of picks) if (hitSet.has(p)) matches++;
+        const mult = bonusType === 'bonus' ? (game.bonus ?? 1) : bonusType === 'super' ? (game.super_bonus ?? 1) : 1;
+        const basePrize = lookupPrize(spotCount, matches);
+        const prize = basePrize > 0 ? basePrize * mult * histConfig.wager : 0;
+        bk = bk - wagerCost + prize;
+        rounds.push({ gameNum: game.game_num, drawDate: game.draw_date, picks, hits: game.hits, matches, wagered: wagerCost, won: prize, bankroll: bk });
+      }
+      all = rounds;
+    } else {
+      const stats = computeNumberStats(games);
+      const picks = pickNumbers(stats, histConfig.spotCount, histConfig.strategy as Strategy).map(s => s.number);
+      all = simulateSession(picks, games, histConfig.wager, histConfig.bonusType, histConfig.budget, histConfig.gamesTarget);
+    }
+
     setHistRunning(true);
     let idx = 0;
     histIntervalRef.current = setInterval(() => {
@@ -278,7 +365,7 @@ export default function LearningCenterPage() {
       setHistRounds(all.slice(0, idx));
       setTimeout(() => histLogRef.current?.scrollTo(0, histLogRef.current.scrollHeight), 30);
     }, 80);
-  }, [games, histConfig]);
+  }, [games, histConfig, champions]);
 
   useEffect(() => () => { if (histIntervalRef.current) clearInterval(histIntervalRef.current); }, []);
 
@@ -290,10 +377,46 @@ export default function LearningCenterPage() {
   return (
     <div className="space-y-6 max-w-5xl">
       <div>
-        <h1 className="text-2xl font-bold">Learning Center</h1>
+        <h1 className="text-2xl font-bold">Simulator</h1>
         <p className="text-sm text-slate-400 mt-1">
-          Live mode monitors each Keno draw as it happens and tracks your picks in real time.
+          Test strategies against real draws. Results feed into Arthur's evolution engine.
         </p>
+      </div>
+
+      {/* ── Auto-Replay Status ── */}
+      <div className="bg-surface rounded-xl p-4 flex flex-wrap items-center justify-between gap-3 border border-[#2a2a2e]">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-crimson/10 border border-crimson/20 flex items-center justify-center">
+            <span className="text-crimson text-xs font-bold">A</span>
+          </div>
+          <div>
+            <p className="text-sm font-medium text-slate-300">Arthur's Training Data</p>
+            <p className="text-xs text-slate-500">
+              {replayStats.totalResults.toLocaleString()} scored results across {champions.length} champions
+              {replayStats.lastReplay && ` · Last replay ${new Date(replayStats.lastReplay).toLocaleDateString()}`}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={async () => {
+            setReplayTriggering(true);
+            try {
+              const res = await fetch('/api/simulate', { method: 'POST', headers: { 'x-internal': '1' } });
+              const data = await res.json();
+              if (data.ok) {
+                setReplayStats(prev => ({
+                  totalResults: prev.totalResults + (data.totalNew ?? 0),
+                  lastReplay: new Date().toISOString(),
+                }));
+              }
+            } catch { /* best-effort */ }
+            setReplayTriggering(false);
+          }}
+          disabled={replayTriggering || champions.length === 0}
+          className="px-4 py-2 rounded-lg bg-[#1e1e24] border border-[#333] hover:border-crimson/50 text-xs text-slate-300 disabled:opacity-50 transition-colors"
+        >
+          {replayTriggering ? 'Replaying…' : 'Replay Now'}
+        </button>
       </div>
 
       {/* Tabs */}
@@ -334,13 +457,24 @@ export default function LearningCenterPage() {
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">Pick Strategy</label>
                   <select value={config.strategy}
-                    onChange={e => setConfig(c => ({ ...c, strategy: e.target.value as Strategy }))}
+                    onChange={e => setConfig(c => ({ ...c, strategy: e.target.value as Config['strategy'] }))}
                     className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none"
                   >
-                    <option value="balanced">Balanced (Composite Score)</option>
-                    <option value="hot">Hot Numbers</option>
-                    <option value="cold">Cold Numbers</option>
-                    <option value="streak">On Streak</option>
+                    <optgroup label="Simple Strategies">
+                      <option value="balanced">Balanced (Composite Score)</option>
+                      <option value="hot">Hot Numbers</option>
+                      <option value="cold">Cold Numbers</option>
+                      <option value="streak">On Streak</option>
+                    </optgroup>
+                    {champions.length > 0 && (
+                      <optgroup label="Arthur's Champions">
+                        {champions.map(c => (
+                          <option key={c.id} value={`champion-${c.id}`}>
+                            Champion {c.spot_count}-spot (Gen {c.generation})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
                 <div>
@@ -597,14 +731,25 @@ export default function LearningCenterPage() {
               <div>
                 <label className="text-xs text-slate-400 block mb-1">Strategy</label>
                 <select value={histConfig.strategy}
-                  onChange={e => setHistConfig(c => ({ ...c, strategy: e.target.value as Strategy }))}
+                  onChange={e => setHistConfig(c => ({ ...c, strategy: e.target.value as Config['strategy'] }))}
                   className="w-full px-3 py-1.5 rounded bg-[#0e0e10] border border-[#333] text-sm text-white focus:outline-none"
                   disabled={histRunning}
                 >
-                  <option value="balanced">Balanced</option>
-                  <option value="hot">Hot</option>
-                  <option value="cold">Cold</option>
-                  <option value="streak">Streak</option>
+                  <optgroup label="Simple">
+                    <option value="balanced">Balanced</option>
+                    <option value="hot">Hot</option>
+                    <option value="cold">Cold</option>
+                    <option value="streak">Streak</option>
+                  </optgroup>
+                  {champions.length > 0 && (
+                    <optgroup label="Champions">
+                      {champions.map(c => (
+                        <option key={c.id} value={`champion-${c.id}`}>
+                          Champion {c.spot_count}-sp (Gen {c.generation})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
               <div>
@@ -626,8 +771,54 @@ export default function LearningCenterPage() {
                 {histRunning ? `Running… (${histAnimIdx})` : 'Run Backtest'}
               </button>
               {histRounds.length > 0 && !histRunning && (
-                <button onClick={() => { setHistRounds([]); setHistAnimIdx(0); }}
-                  className="px-4 py-2 rounded-lg bg-[#2a2a2e] text-white text-sm">Reset</button>
+                <>
+                  <button onClick={() => { setHistRounds([]); setHistAnimIdx(0); setSavedCount(0); }}
+                    className="px-4 py-2 rounded-lg bg-[#2a2a2e] text-white text-sm">Reset</button>
+                  {histConfig.strategy.startsWith('champion-') && savedCount === 0 && (
+                    <button
+                      disabled={savingToTraining}
+                      onClick={async () => {
+                        setSavingToTraining(true);
+                        const champId = parseInt(histConfig.strategy.split('-')[1], 10);
+                        const champ = champions.find(c => c.id === champId);
+                        if (!champ) { setSavingToTraining(false); return; }
+                        const genome = champ.genome;
+                        const bonusType = genome.bonus_type ?? 'none';
+                        const rows = histRounds.map(r => ({
+                          strategy_id: champId,
+                          game_num: r.gameNum,
+                          spot_count: histConfig.spotCount,
+                          picks: r.picks,
+                          actual_hits: r.hits,
+                          matches: r.matches,
+                          prize: r.won,
+                          pnl: r.won - r.wagered,
+                          is_shadow_play: true,
+                          bonus_type: bonusType,
+                          bonus_multiplier: 1,
+                        }));
+                        let saved = 0;
+                        for (let i = 0; i < rows.length; i += 100) {
+                          const batch = rows.slice(i, i + 100);
+                          const { data } = await supabase.from('live_results').upsert(batch, {
+                            onConflict: 'strategy_id,game_num',
+                            ignoreDuplicates: true,
+                          }).select('id');
+                          saved += data?.length ?? 0;
+                        }
+                        setSavedCount(saved);
+                        setReplayStats(prev => ({ ...prev, totalResults: prev.totalResults + saved }));
+                        setSavingToTraining(false);
+                      }}
+                      className="px-4 py-2 rounded-lg bg-green-900/40 border border-green-700/40 text-green-400 text-sm hover:bg-green-900/60 disabled:opacity-50 transition-colors"
+                    >
+                      {savingToTraining ? 'Saving…' : "Save to Arthur's Training"}
+                    </button>
+                  )}
+                  {savedCount > 0 && (
+                    <span className="text-xs text-green-400">Added {savedCount} results to training data</span>
+                  )}
+                </>
               )}
             </div>
           </div>
