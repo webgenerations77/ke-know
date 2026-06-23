@@ -146,20 +146,20 @@ export function mutateGenome(
   for (const key of toMutate) {
     const range = GENOME_RANGES[key] as [number, number];
     const span = range[1] - range[0];
-    const oldVal = g[key] as number;
+    const oldVal = (g[key] as number) ?? range[0];
 
     if (Math.random() < largeMutationProb) {
       const newVal = INTEGER_KEYS.has(key)
         ? randInt(range[0], range[1])
         : rand(range[0], range[1]);
       (g as any)[key] = newVal;
-      log.push(`${key}: ${typeof oldVal === 'number' && oldVal.toFixed ? oldVal.toFixed(3) : oldVal} -> ${typeof newVal === 'number' && newVal.toFixed ? newVal.toFixed(3) : newVal} (full randomize)`);
+      log.push(`${key}: ${oldVal.toFixed(3)} -> ${newVal.toFixed(3)} (full randomize)`);
     } else {
       const delta = (Math.random() * 2 - 1) * mutationRate * span;
       let newVal = Math.min(range[1], Math.max(range[0], oldVal + delta));
       if (INTEGER_KEYS.has(key)) newVal = Math.round(newVal);
       (g as any)[key] = newVal;
-      log.push(`${key}: ${oldVal.toFixed(3)} -> ${typeof newVal === 'number' && newVal.toFixed ? newVal.toFixed(3) : newVal} (delta ${delta >= 0 ? '+' : ''}${delta.toFixed(3)})`);
+      log.push(`${key}: ${oldVal.toFixed(3)} -> ${newVal.toFixed(3)} (delta ${delta >= 0 ? '+' : ''}${delta.toFixed(3)})`);
     }
   }
 
