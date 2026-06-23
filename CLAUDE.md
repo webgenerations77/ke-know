@@ -38,7 +38,7 @@ Maryland Lottery API → /api/poll (every 4min) → games table
 
 A genetic algorithm that breeds Keno number-picking strategies:
 
-- **Genome** (`genome.ts`): 13 active genes controlling lookback window, weighting method, decay rates, gap detection, hot/cold balance, pair co-occurrence, pick noise, lookback step, bonus type, and wager ($1-$5 base). Heuristic seeding produces momentum, contrarian, balanced, and bonus-hunter archetypes. `getWagerCost(genome)` computes total per-game cost (base wager × bonus multiplier)
+- **Genome** (`genome.ts`): 15 active genes controlling lookback window, weighting method, decay rates, gap detection, hot/cold balance, pair co-occurrence, pick noise, lookback step, bonus type, wager ($1-$5 base), and commitment (3-20 games with same picks before regenerating). Heuristic seeding produces momentum, contrarian, balanced, and bonus-hunter archetypes. `getWagerCost(genome)` computes total per-game cost (base wager × bonus multiplier). Commitment state tracked on `strategies.current_picks` + `commitment_remaining`
 - **Fitness** (`fitness.ts`): 3-fold temporal cross-validation (not single train/test split). Fitness = 35% OOS PPG + 35% trust-scaled live PPG + 15% overfit penalty + 10% risk-adjusted return + 5% diversity bonus. Live PPG only counts genuine pre-committed predictions (source='prediction'), not replays. Trust scaling: sqrt(n/100) clamped to [0,1]
 - **Evolution** (`evolve.ts`): 20 strategies per spot count (1-10), 10 survive. SUS parent selection, 40% crossover / 60% mutation, 2 random immigrants per generation. Mutation rate: 50%->35%->20%->12% (never below 12%). Champions promoted per spot count if they beat the incumbent
 

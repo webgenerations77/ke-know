@@ -12,6 +12,7 @@ export interface StrategyGenome {
   pair_weight: number;
   lookback_step: number;
   wager: number;
+  commitment_games: number;
 }
 
 export function getWagerCost(genome: StrategyGenome): number {
@@ -34,6 +35,7 @@ export const GENOME_RANGES: Record<keyof StrategyGenome, [number | string, numbe
   pair_weight:              [0.0,  1.0],
   lookback_step:            [1,    5],
   wager:                    [1,    5],
+  commitment_games:         [3,    20],
 };
 
 const WEIGHTING_METHODS: StrategyGenome['weighting_method'][] = [
@@ -43,7 +45,7 @@ const WEIGHTING_METHODS: StrategyGenome['weighting_method'][] = [
 const BONUS_TYPES: StrategyGenome['bonus_type'][] = ['none', 'bonus', 'super_bonus'];
 
 const INTEGER_KEYS = new Set<keyof StrategyGenome>([
-  'lookback_games', 'recency_boost_cutoff', 'gap_threshold', 'lookback_step', 'wager',
+  'lookback_games', 'recency_boost_cutoff', 'gap_threshold', 'lookback_step', 'wager', 'commitment_games',
 ]);
 
 function rand(min: number, max: number): number {
@@ -69,6 +71,7 @@ export function randomGenome(): StrategyGenome {
     pair_weight:              rand(0.0, 1.0),
     lookback_step:            randInt(1, 5),
     wager:                    randInt(1, 5),
+    commitment_games:         randInt(3, 20),
   };
 }
 
@@ -119,7 +122,7 @@ export function heuristicGenome(archetype: 'momentum' | 'contrarian' | 'balanced
 const NUMERIC_KEYS: (keyof StrategyGenome)[] = [
   'lookback_games', 'decay_rate', 'recency_boost_cutoff', 'recency_boost_multiplier',
   'gap_weight', 'gap_threshold', 'hot_cold_balance', 'pick_noise', 'pair_weight', 'lookback_step',
-  'wager',
+  'wager', 'commitment_games',
 ];
 
 export function mutateGenome(
@@ -231,6 +234,9 @@ export function describeGenome(genome: StrategyGenome): string {
   } else if (baseWager > 1) {
     parts.push(`$${baseWager}/game wager`);
   }
+
+  const commitment = genome.commitment_games ?? 5;
+  parts.push(`locks picks for ${commitment} games`);
 
   return parts.join(' · ');
 }

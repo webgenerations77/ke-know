@@ -1149,8 +1149,8 @@ export default function MonitorPage() {
                     <th className="px-3 py-2 text-center">Spot</th>
                     <th className="px-3 py-2 text-center hidden sm:table-cell">Matches</th>
                     <th className="px-3 py-2 text-center">Bonus</th>
-                    <th className="px-3 py-2 text-center hidden sm:table-cell">Run</th>
-                    <th className="px-3 py-2 text-left">Numbers Played</th>
+                    <th className="px-3 py-2 text-center">Played</th>
+                    <th className="px-3 py-2 text-left hidden sm:table-cell">Numbers Played</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1173,10 +1173,12 @@ export default function MonitorPage() {
                           <span className="text-slate-600">Base</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-center text-slate-400 hidden sm:table-cell">
-                        {row.consecutiveGames > 0 ? `${row.consecutiveGames}g` : '—'}
+                      <td className="px-3 py-2 text-center">
+                        {row.consecutiveGames > 0 ? (
+                          <span className="font-mono text-slate-300">{row.consecutiveGames}g</span>
+                        ) : '—'}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 hidden sm:table-cell">
                         {row.prize > 0 ? (
                           <div className="flex flex-wrap gap-0.5">
                             {[...row.picks].sort((a, b) => a - b).map(n => (

@@ -197,13 +197,20 @@ function simulateRange(
 ): { pnl: number; games: number; wins: number; totalMatches: number; bestWin: number; maxLosingStreak: number } {
   const bonusType = (genome.bonus_type ?? 'none') as string;
   const wagerCost = getWagerCost(genome);
+  const commitment = genome.commitment_games ?? 5;
   let pnl = 0, games = 0, wins = 0, totalMatches = 0, bestWin = 0;
   let losingStreak = 0, maxLosingStreak = 0;
+  let commitmentRemaining = 0;
 
   for (let i = startIdx; i < endIdx; i++) {
-    scoreNumbers(genome, allGames, i, scores, lastSeenScratch, pairScratch);
-    selectTopNInto(scores, spotCount, topIdx, topScore);
-    applyPickNoise(topIdx, spotCount, genome.pick_noise ?? 0);
+    // Only regenerate picks when commitment expires
+    if (commitmentRemaining <= 0) {
+      scoreNumbers(genome, allGames, i, scores, lastSeenScratch, pairScratch);
+      selectTopNInto(scores, spotCount, topIdx, topScore);
+      applyPickNoise(topIdx, spotCount, genome.pick_noise ?? 0);
+      commitmentRemaining = commitment;
+    }
+    commitmentRemaining--;
 
     const hits = allGames[i].hits;
     let matches = 0;

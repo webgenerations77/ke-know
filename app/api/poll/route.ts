@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
 
     const { data: promoted } = await db
       .from('strategies')
-      .select('id,spot_count,genome')
+      .select('id,spot_count,genome,current_picks,commitment_remaining')
       .eq('status', 'promoted');
 
     // Load today's daily pick to check if we should use its exact numbers
@@ -142,22 +142,50 @@ export async function POST(req: NextRequest) {
 
       const games = (recentGames ?? []) as Game[];
 
-      // Generate picks once per strategy, then commit for the next 3 games
+      // Generate or reuse picks based on commitment state
       const picksPerStrategy = new Map<number, { picks: number[]; bonusType: string; spotCount: number }>();
+      const commitmentUpdates: { id: number; picks: number[]; remaining: number }[] = [];
+
       for (const s of promoted) {
-        if (inDailyWindow && dailyPick && s.id === dailyPick.strategy_id) {
-          picksPerStrategy.set(s.id as number, {
+        const sid = s.id as number;
+        const genome = s.genome as StrategyGenome;
+        const commitmentLen = genome.commitment_games ?? 5;
+
+        if (inDailyWindow && dailyPick && sid === dailyPick.strategy_id) {
+          picksPerStrategy.set(sid, {
             picks: dailyPick.picks as number[],
             bonusType: dailyPick.bonus_type as string,
             spotCount: dailyPick.spot_count as number,
           });
         } else {
-          picksPerStrategy.set(s.id as number, {
-            picks: generatePicks(s.genome as StrategyGenome, s.spot_count as number, games),
-            bonusType: (s.genome as StrategyGenome).bonus_type ?? 'none',
-            spotCount: s.spot_count as number,
-          });
+          const remaining = (s.commitment_remaining as number) ?? 0;
+          const currentPicks = s.current_picks as number[] | null;
+
+          if (remaining > 0 && currentPicks && currentPicks.length > 0) {
+            picksPerStrategy.set(sid, {
+              picks: currentPicks,
+              bonusType: genome.bonus_type ?? 'none',
+              spotCount: s.spot_count as number,
+            });
+            commitmentUpdates.push({ id: sid, picks: currentPicks, remaining: remaining - 1 });
+          } else {
+            const newPicks = generatePicks(genome, s.spot_count as number, games);
+            picksPerStrategy.set(sid, {
+              picks: newPicks,
+              bonusType: genome.bonus_type ?? 'none',
+              spotCount: s.spot_count as number,
+            });
+            commitmentUpdates.push({ id: sid, picks: newPicks, remaining: commitmentLen - 1 });
+          }
         }
+      }
+
+      // Update commitment state on strategies
+      for (const upd of commitmentUpdates) {
+        await db.from('strategies').update({
+          current_picks: upd.picks,
+          commitment_remaining: upd.remaining,
+        }).eq('id', upd.id);
       }
 
       const allPredictions: { strategy_id: number; spot_count: number; predicted_for_game_num: number; picks: number[]; bonus_type: string }[] = [];

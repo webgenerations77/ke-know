@@ -88,6 +88,8 @@ export interface Strategy {
   promoted_at: string | null;
   real_world_plays: number;
   real_world_pnl: number;
+  current_picks: number[] | null;
+  commitment_remaining: number;
 }
 
 export interface StrategyResult {
