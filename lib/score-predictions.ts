@@ -1,16 +1,7 @@
 import { createServiceClient } from '@/lib/supabase-server';
 import { lookupPrize } from '@/lib/keno/prizes';
+import { getWagerCost, type StrategyGenome } from '@/lib/evolution/genome';
 
-/**
- * Scores every `pending_predictions` row whose target game has already
- * landed in the `games` table, regardless of whether that game arrived via
- * a single /api/poll insert or via /api/sync's multi-game backfill.
- *
- * Bonus logic: each pending prediction carries a bonus_type ('none', 'bonus',
- * or 'super_bonus') inherited from the champion strategy's genome. The drawn
- * bonus/super_bonus multiplier comes from the game row itself and is applied
- * to the base prize. Wager cost is 1/2/3 respectively.
- */
 export async function scorePendingPredictions(
   db: ReturnType<typeof createServiceClient>
 ): Promise<number> {
@@ -27,6 +18,17 @@ export async function scorePendingPredictions(
     .select('game_num,hits,bonus,super_bonus')
     .in('game_num', gameNums);
 
+  // Load strategy genomes to get evolved wager amounts
+  const strategyIds = [...new Set(pending.map(p => p.strategy_id as number))];
+  const { data: strategies } = await db
+    .from('strategies')
+    .select('id,genome')
+    .in('id', strategyIds);
+  const genomeMap = new Map<number, StrategyGenome>();
+  for (const s of strategies ?? []) {
+    genomeMap.set(s.id as number, s.genome as unknown as StrategyGenome);
+  }
+
   interface GameRow { game_num: number; hits: number[]; bonus: number | null; super_bonus: number | null }
   const gamesByNum = new Map<number, GameRow>();
   for (const g of games ?? []) gamesByNum.set(g.game_num as number, g as GameRow);
@@ -36,7 +38,7 @@ export async function scorePendingPredictions(
 
   for (const pred of pending) {
     const game = gamesByNum.get(pred.predicted_for_game_num as number);
-    if (!game) continue; // game hasn't landed in the DB yet — leave pending
+    if (!game) continue;
 
     const picks: number[] = pred.picks as number[];
     const hitSet = new Set(game.hits);
@@ -44,7 +46,8 @@ export async function scorePendingPredictions(
     for (const p of picks) if (hitSet.has(p)) matches++;
 
     const bonusType = (pred.bonus_type ?? 'none') as string;
-    const wagerCost = bonusType === 'super_bonus' ? 3 : bonusType === 'bonus' ? 2 : 1;
+    const genome = genomeMap.get(pred.strategy_id as number);
+    const wagerCost = genome ? getWagerCost(genome) : (bonusType === 'super_bonus' ? 3 : bonusType === 'bonus' ? 2 : 1);
     const drawnMultiplier = bonusType === 'bonus'
       ? (game.bonus ?? 1)
       : bonusType === 'super_bonus'
@@ -52,7 +55,8 @@ export async function scorePendingPredictions(
       : 1;
 
     const basePrize = lookupPrize(pred.spot_count as number, matches);
-    const effectivePrize = basePrize > 0 ? basePrize * drawnMultiplier : 0;
+    const baseWager = genome?.wager ?? 1;
+    const effectivePrize = basePrize > 0 ? basePrize * baseWager * drawnMultiplier : 0;
     const pnl = effectivePrize - wagerCost;
 
     await db.from('live_results').insert({
@@ -67,6 +71,7 @@ export async function scorePendingPredictions(
       is_shadow_play: true,
       bonus_type: bonusType,
       bonus_multiplier: drawnMultiplier,
+      source: 'prediction',
     });
 
     await db.from('pending_predictions').update({ scored: true }).eq('id', pred.id);

@@ -19,6 +19,8 @@ interface DailyPick {
   expected_pnl_per_game: number | null;
   expected_total_pnl: number | null;
   fitness_score: number | null;
+  games_played: number;
+  status: 'pending' | 'playing' | 'complete';
   reasoning: {
     shadow_plays?: number;
     win_rate?: number;
@@ -32,9 +34,13 @@ interface PickPerformance {
   spot_count: number;
   picks: number[];
   bonus_type: string;
+  wager_per_game: number;
+  games_played: number;
+  recommended_games: number;
   games_scored: number;
   wins: number;
   total_pnl: number;
+  total_wagered: number;
   best_win: number;
 }
 
@@ -100,7 +106,7 @@ export default function DailyPickPage() {
   async function loadHistory() {
     const { data: pastPicks } = await supabase
       .from('daily_picks')
-      .select('pick_date, spot_count, picks, bonus_type, strategy_id')
+      .select('pick_date, spot_count, picks, bonus_type, strategy_id, wager_per_game, games_played, recommended_games')
       .order('pick_date', { ascending: false })
       .limit(30);
 
@@ -124,15 +130,22 @@ export default function DailyPickPage() {
         new Date(r.scored_at) <= dayEnd
       );
 
+      const wagerPerGame = (dp.wager_per_game as number) ?? 1;
+      const gamesScored = dayResults.length;
+
       return {
         pick_date: dp.pick_date,
         spot_count: dp.spot_count,
         picks: dp.picks as number[],
         bonus_type: dp.bonus_type as string,
-        games_scored: dayResults.length,
+        wager_per_game: wagerPerGame,
+        games_played: (dp.games_played as number) ?? 0,
+        recommended_games: (dp.recommended_games as number) ?? 20,
+        games_scored: gamesScored,
         wins: dayResults.filter(r => (r.prize as number) > 0).length,
         total_pnl: dayResults.reduce((s, r) => s + (r.pnl as number), 0),
-        best_win: dayResults.length > 0 ? Math.max(...dayResults.map(r => r.prize as number)) : 0,
+        total_wagered: gamesScored * wagerPerGame,
+        best_win: gamesScored > 0 ? Math.max(...dayResults.map(r => r.prize as number)) : 0,
       };
     });
 
@@ -202,7 +215,12 @@ export default function DailyPickPage() {
       ? 'text-amber-300 bg-amber-900/30 border-amber-500/40'
       : 'text-slate-400 bg-[#1e1e24] border-[#333]';
 
+  const bonusMultiplier = pick.bonus_type === 'super_bonus' ? 3 : pick.bonus_type === 'bonus' ? 2 : 1;
+  const baseWager = bonusMultiplier > 1 ? Math.round(pick.wager_per_game / bonusMultiplier) : pick.wager_per_game;
   const totalWager = pick.wager_per_game * pick.recommended_games;
+  const gamesPlayed = pick.games_played ?? 0;
+  const playProgress = Math.min(100, (gamesPlayed / pick.recommended_games) * 100);
+  const playStatus = pick.status ?? 'pending';
   const win = windowStatus(pick.best_hour, now);
   const ppg = pick.expected_pnl_per_game ?? 0;
   const total = pick.expected_total_pnl ?? 0;
@@ -274,18 +292,64 @@ export default function DailyPickPage() {
       </div>
 
       {/* Session plan */}
-      <div className="bg-surface rounded-xl p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-        <div className="flex sm:block items-center justify-between">
-          <p className="text-xs text-slate-500 sm:mb-1">Wager / Game</p>
-          <p className="text-xl sm:text-2xl font-bold">${Number(pick.wager_per_game).toFixed(2)}</p>
+      <div className="bg-surface rounded-xl p-4 sm:p-5 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <div className="flex sm:block items-center justify-between">
+            <p className="text-xs text-slate-500 sm:mb-1">Base Wager</p>
+            <p className="text-xl sm:text-2xl font-bold">${baseWager.toFixed(2)}</p>
+          </div>
+          <div className="flex sm:block items-center justify-between">
+            <p className="text-xs text-slate-500 sm:mb-1">
+              {pick.bonus_type === 'none' ? 'Wager / Game' : `With ${bonusLabel}`}
+            </p>
+            <p className="text-xl sm:text-2xl font-bold">
+              ${Number(pick.wager_per_game).toFixed(2)}
+              {pick.bonus_type !== 'none' && (
+                <span className="text-sm text-slate-500 font-normal ml-1">
+                  ({pick.bonus_type === 'super_bonus' ? '3' : '2'}× base)
+                </span>
+              )}
+            </p>
+          </div>
+          <div className="flex sm:block items-center justify-between">
+            <p className="text-xs text-slate-500 sm:mb-1">Games to Play</p>
+            <p className="text-xl sm:text-2xl font-bold">{pick.recommended_games}</p>
+          </div>
+          <div className="flex sm:block items-center justify-between">
+            <p className="text-xs text-slate-500 sm:mb-1">Total Investment</p>
+            <p className="text-xl sm:text-2xl font-bold">${totalWager.toFixed(2)}</p>
+          </div>
         </div>
-        <div className="flex sm:block items-center justify-between">
-          <p className="text-xs text-slate-500 sm:mb-1">Games to Play</p>
-          <p className="text-xl sm:text-2xl font-bold">{pick.recommended_games}</p>
-        </div>
-        <div className="flex sm:block items-center justify-between">
-          <p className="text-xs text-slate-500 sm:mb-1">Total Investment</p>
-          <p className="text-xl sm:text-2xl font-bold">${totalWager.toFixed(2)}</p>
+
+        {/* Arthur's play progress */}
+        <div className="border-t border-[#1e1e24] pt-3">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs text-slate-500">Arthur's Shadow Play Progress</p>
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+              playStatus === 'complete' ? 'bg-green-900/30 text-green-400 border border-green-500/30' :
+              playStatus === 'playing' ? 'bg-amber-900/30 text-amber-400 border border-amber-500/30' :
+              'bg-[#1e1e24] text-slate-500 border border-[#333]'
+            }`}>
+              {playStatus === 'complete' ? 'Complete' : playStatus === 'playing' ? 'Playing Now' : 'Waiting for Window'}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 bg-[#1e1e24] rounded-full h-2.5 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  playStatus === 'complete' ? 'bg-green-500' : 'bg-crimson'
+                }`}
+                style={{ width: `${playProgress}%` }}
+              />
+            </div>
+            <span className="text-sm font-mono text-slate-300 shrink-0">
+              {gamesPlayed}/{pick.recommended_games}
+            </span>
+          </div>
+          <p className="text-[10px] text-slate-600 mt-1.5">
+            Arthur plays these exact picks during the {pick.best_hour != null ? `${fmtHour(pick.best_hour)}–${fmtHour(pick.best_hour + 1)}` : 'recommended'} window.
+            Results appear in the play history below.
+          </p>
         </div>
       </div>
 
@@ -320,6 +384,7 @@ export default function DailyPickPage() {
         const totalGames = scored.reduce((s, h) => s + h.games_scored, 0);
         const totalWins = scored.reduce((s, h) => s + h.wins, 0);
         const totalPnl = scored.reduce((s, h) => s + h.total_pnl, 0);
+        const totalWageredAll = scored.reduce((s, h) => s + h.total_wagered, 0);
         const winningDays = scored.filter(h => h.total_pnl > 0).length;
         const winRate = totalGames > 0 ? ((totalWins / totalGames) * 100).toFixed(1) : '0.0';
         const ppg = totalGames > 0 ? (totalPnl / totalGames) : 0;
@@ -331,7 +396,7 @@ export default function DailyPickPage() {
               className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-[#1e1e24] transition-colors"
             >
               <div>
-                <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] mb-1">Virtual Play Record</p>
+                <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] mb-1">Daily Pick Play Record</p>
                 <div className="flex items-center gap-4">
                   <span className="text-lg font-bold">
                     <span className="text-green-400">{totalWins}W</span>
@@ -348,7 +413,8 @@ export default function DailyPickPage() {
                 <div className="flex gap-4 mt-1.5 text-[10px] text-slate-600">
                   <span>{winRate}% win rate</span>
                   <span>{ppg >= 0 ? '+' : ''}${ppg.toFixed(3)}/game avg</span>
-                  <span>{totalGames} total games tracked</span>
+                  <span>${totalWageredAll.toFixed(2)} total wagered</span>
+                  <span>{totalGames} games played</span>
                 </div>
               </div>
               <span className="text-slate-600">{historyOpen ? '▲' : '▼'}</span>
@@ -362,44 +428,60 @@ export default function DailyPickPage() {
                       <th className="px-3 py-2 text-left">Date</th>
                       <th className="px-3 py-2 text-left">Play</th>
                       <th className="px-3 py-2 text-left hidden sm:table-cell">Numbers</th>
+                      <th className="px-3 py-2 text-center hidden sm:table-cell">Wager</th>
+                      <th className="px-3 py-2 text-center">Games</th>
                       <th className="px-3 py-2 text-left">W–L</th>
                       <th className="px-3 py-2 text-right">P&L</th>
                       <th className="px-3 py-2 text-right hidden sm:table-cell">Best</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {history.map(h => (
-                      <tr key={h.pick_date} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
-                        <td className="px-3 py-2 font-mono text-slate-300 whitespace-nowrap">{h.pick_date}</td>
-                        <td className="px-3 py-2 text-slate-400">{h.spot_count}-sp</td>
-                        <td className="px-3 py-2 hidden sm:table-cell">
-                          <div className="flex flex-wrap gap-0.5">
-                            {h.picks.slice(0, h.spot_count).sort((a, b) => a - b).map(n => (
-                              <span key={n} className="w-5 h-5 rounded-full bg-crimson/20 border border-crimson/40 text-crimson text-[9px] font-bold flex items-center justify-center">
-                                {n}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          {h.games_scored > 0 ? (
-                            <>
-                              <span className="text-green-400">{h.wins}W</span>
-                              <span className="text-slate-500 mx-0.5">–</span>
-                              <span className="text-red-400">{h.games_scored - h.wins}L</span>
-                            </>
-                          ) : (
-                            <span className="text-slate-600">—</span>
-                          )}
-                        </td>
-                        <td className={`px-3 py-2 text-right font-mono ${h.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {h.games_scored > 0 ? `${h.total_pnl >= 0 ? '+' : ''}$${h.total_pnl.toFixed(2)}` : '—'}
-                        </td>
-                        <td className="px-3 py-2 text-right hidden sm:table-cell">
-                          {h.best_win > 0 ? `$${h.best_win}` : '—'}
-                        </td>
-                      </tr>
-                    ))}
+                    {history.map(h => {
+                      const baseW = 1;
+                      const bonusLbl = h.bonus_type === 'super_bonus' ? 'SB' : h.bonus_type === 'bonus' ? 'B' : '';
+                      return (
+                        <tr key={h.pick_date} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                          <td className="px-3 py-2 font-mono text-slate-300 whitespace-nowrap">{h.pick_date}</td>
+                          <td className="px-3 py-2 text-slate-400">
+                            {h.spot_count}-sp
+                            {bonusLbl && <span className={`ml-1 text-[9px] font-semibold ${h.bonus_type === 'super_bonus' ? 'text-purple-400' : 'text-amber-400'}`}>{bonusLbl}</span>}
+                          </td>
+                          <td className="px-3 py-2 hidden sm:table-cell">
+                            <div className="flex flex-wrap gap-0.5">
+                              {h.picks.slice(0, h.spot_count).sort((a, b) => a - b).map(n => (
+                                <span key={n} className="w-5 h-5 rounded-full bg-crimson/20 border border-crimson/40 text-crimson text-[9px] font-bold flex items-center justify-center">
+                                  {n}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-center hidden sm:table-cell text-slate-400">
+                            <span className="text-slate-500">${baseW}</span>
+                            {h.wager_per_game > baseW && <span className="text-slate-300">→${h.wager_per_game}</span>}
+                          </td>
+                          <td className="px-3 py-2 text-center text-slate-400">
+                            {h.games_played}/{h.recommended_games}
+                          </td>
+                          <td className="px-3 py-2">
+                            {h.games_scored > 0 ? (
+                              <>
+                                <span className="text-green-400">{h.wins}W</span>
+                                <span className="text-slate-500 mx-0.5">–</span>
+                                <span className="text-red-400">{h.games_scored - h.wins}L</span>
+                              </>
+                            ) : (
+                              <span className="text-slate-600">—</span>
+                            )}
+                          </td>
+                          <td className={`px-3 py-2 text-right font-mono ${h.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {h.games_scored > 0 ? `${h.total_pnl >= 0 ? '+' : ''}$${h.total_pnl.toFixed(2)}` : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-right hidden sm:table-cell">
+                            {h.best_win > 0 ? `$${h.best_win}` : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

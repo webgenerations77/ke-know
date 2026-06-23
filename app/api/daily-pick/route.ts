@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase-server';
 import { generatePicks } from '@/lib/evolution/fitness';
-import type { StrategyGenome } from '@/lib/evolution/genome';
+import { getWagerCost, type StrategyGenome } from '@/lib/evolution/genome';
 import type { Game } from '@/lib/supabase';
 import { notifyDailyPick } from '@/lib/notify';
 
@@ -120,7 +120,7 @@ async function generateDailyPick(db: ReturnType<typeof createServiceClient>) {
   }
 
   const bonusType = genome.bonus_type ?? 'none';
-  const wagerPerGame = bonusType === 'super_bonus' ? 3 : bonusType === 'bonus' ? 2 : 1;
+  const wagerPerGame = getWagerCost(genome);
   const recommendedGames = 20;
   const expectedPpg = bestResult?.test_pnl_per_game ?? 0;
 
@@ -137,6 +137,8 @@ async function generateDailyPick(db: ReturnType<typeof createServiceClient>) {
     expected_pnl_per_game: expectedPpg,
     expected_total_pnl: expectedPpg * recommendedGames,
     fitness_score: bestFitness,
+    games_played: 0,
+    status: 'pending',
     reasoning: {
       champion_id: bestChamp.id,
       shadow_plays: liveResults?.length ?? 0,

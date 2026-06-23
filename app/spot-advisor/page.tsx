@@ -30,15 +30,29 @@ interface Recommendation {
   evPerDollar: number;
   recommendedGames: number;
   bonus: BonusPick;
+  tier: PlayTier;
+  evolvedWager: number;
 }
 
-// How many games in a row to commit to so the strategy has room to recover
-// from its own worst historical losing streak (with a buffer), rounded to a
-// friendly number. Strategies without backtest history default to a
-// conservative 20-game session.
-function recommendedSessionLength(maxLosingStreak: number | null | undefined): number {
-  const streak = maxLosingStreak ?? 5;
-  return Math.max(20, Math.ceil((streak * 2) / 10) * 10);
+type PlayTier = 'short' | 'medium' | 'long';
+
+interface TierDef {
+  label: string;
+  subtitle: string;
+  minGames: number;
+  maxGames: number;
+  badgeColor: string;
+}
+
+const TIERS: Record<PlayTier, TierDef> = {
+  short:  { label: 'Quick Play',    subtitle: 'Up to 40 games — fast action, frequent wins', minGames: 10, maxGames: 40, badgeColor: 'bg-green-900/30 text-green-400 border-green-500/30' },
+  medium: { label: 'Standard Session', subtitle: '40–80 games — balanced risk and reward',    minGames: 40, maxGames: 80, badgeColor: 'bg-amber-900/30 text-amber-400 border-amber-500/30' },
+  long:   { label: 'Marathon',      subtitle: '80+ games — patient play, maximum edge',       minGames: 80, maxGames: 150, badgeColor: 'bg-purple-900/30 text-purple-400 border-purple-500/30' },
+};
+
+function clampGames(games: number, tier: PlayTier): number {
+  const t = TIERS[tier];
+  return Math.min(t.maxGames, Math.max(t.minGames, Math.ceil(games / 10) * 10));
 }
 
 interface SpotRow {
@@ -222,39 +236,72 @@ export default function SpotAdvisorPage() {
   const baseEv = computeEV(bestSpots);
   const { label: bestBonus, baseRatio, bonusRatio, superRatio } = bonusFor(bestSpots);
 
-  // Top 3 recommendations: evolution-promoted champions first (highest fitness,
-  // one per spot count), filled out with the next-best static EV spot counts
-  // until evolution has promoted enough champions.
+  // Three session tiers: short (≤20 games), medium (40-80), long (80+).
+  // For each tier, pick the best champion suited to that session length.
+  // Short = highest win rate (frequent wins in few games).
+  // Medium = highest fitness (best overall performer).
+  // Long = best OOS PPG (strongest long-run edge, patience required).
   const top3: Recommendation[] = (() => {
     const list: Recommendation[] = [];
     const usedSpots = new Set<number>();
 
-    for (const champ of evoChampions) {
-      if (list.length >= 3) break;
-      const spots = champ.strategy.spot_count;
-      if (usedSpots.has(spots)) continue;
-      usedSpots.add(spots);
-      list.push({
-        spots,
-        source: 'evolution',
-        evoChampion: champ,
-        evPerDollar: computeEV(spots),
-        recommendedGames: recommendedSessionLength(champ.result?.max_losing_streak),
-        bonus: bonusFor(spots),
-      });
+    function pickChamp(
+      tier: PlayTier,
+      sortFn: (a: EvoChampion, b: EvoChampion) => number
+    ): Recommendation | null {
+      const sorted = [...evoChampions].sort(sortFn);
+      for (const champ of sorted) {
+        const spots = champ.strategy.spot_count;
+        if (usedSpots.has(spots)) continue;
+        usedSpots.add(spots);
+        const streak = champ.result?.max_losing_streak ?? 5;
+        const genome = champ.strategy.genome as unknown as StrategyGenome;
+        return {
+          spots,
+          source: 'evolution',
+          evoChampion: champ,
+          evPerDollar: computeEV(spots),
+          recommendedGames: clampGames(streak * 2, tier),
+          bonus: bonusFor(spots),
+          tier,
+          evolvedWager: genome.wager ?? 1,
+        };
+      }
+      return null;
     }
 
+    // Short: highest win rate — more likely to see wins in a quick session
+    const shortPick = pickChamp('short', (a, b) =>
+      (b.result?.win_rate ?? 0) - (a.result?.win_rate ?? 0));
+
+    // Medium: highest fitness — best overall balanced performer
+    const medPick = pickChamp('medium', (a, b) =>
+      (b.result?.fitness_score ?? -999) - (a.result?.fitness_score ?? -999));
+
+    // Long: best OOS PPG — strongest long-run edge
+    const longPick = pickChamp('long', (a, b) =>
+      (b.result?.test_pnl_per_game ?? -999) - (a.result?.test_pnl_per_game ?? -999));
+
+    if (shortPick) list.push(shortPick);
+    if (medPick) list.push(medPick);
+    if (longPick) list.push(longPick);
+
+    // Fill remaining slots with EV-based picks
     const evSorted = [...rows].sort((a, b) => b.evPerDollar - a.evPerDollar);
+    const tierOrder: PlayTier[] = ['short', 'medium', 'long'];
     for (const r of evSorted) {
       if (list.length >= 3) break;
       if (usedSpots.has(r.spots)) continue;
       usedSpots.add(r.spots);
+      const tier = tierOrder[list.length] ?? 'medium';
       list.push({
         spots: r.spots,
         source: 'ev',
         evPerDollar: r.evPerDollar,
-        recommendedGames: recommendedSessionLength(null),
+        recommendedGames: clampGames(20, tier),
         bonus: bonusFor(r.spots),
+        tier,
+        evolvedWager: wager,
       });
     }
 
@@ -267,82 +314,101 @@ export default function SpotAdvisorPage() {
     <div className="space-y-6 max-w-4xl">
       <h1 className="text-2xl font-bold">Spot Advisor</h1>
 
-      {/* Top 3 Recommendations — evolution-promoted champions (highest fitness
-          score, one per spot count) first, filled out with the next-best
-          static EV spot counts until the engine has promoted enough champions. */}
       <div className="bg-crimson/10 border border-crimson/30 rounded-xl p-5 space-y-4">
-        <h2 className="font-semibold text-crimson-light">Top 3 Recommendations</h2>
+        <h2 className="font-semibold text-crimson-light">Arthur's Picks by Session Length</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {top3.map((rec, i) => (
-            <div key={`${rec.spots}-${i}`} className="bg-[#0e0e10] rounded-xl p-4 border border-[#2a2a2e] space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-crimson">#{i + 1}</span>
-                {rec.source === 'evolution' ? (
-                  <span className="px-2 py-0.5 rounded-full bg-crimson/20 text-crimson-light text-[10px] font-semibold uppercase tracking-wide">
-                    Evolution-Learned
+          {top3.map((rec) => {
+            const tier = TIERS[rec.tier];
+            return (
+              <div key={`${rec.spots}-${rec.tier}`} className="bg-[#0e0e10] rounded-xl p-4 border border-[#2a2a2e] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wide border ${tier.badgeColor}`}>
+                    {tier.label}
                   </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-400 text-[10px] font-semibold uppercase tracking-wide">
-                    EV-Based
-                  </span>
+                  {rec.source === 'evolution' ? (
+                    <span className="px-2 py-0.5 rounded-full bg-crimson/20 text-crimson-light text-[10px] font-semibold uppercase tracking-wide">
+                      Evolved
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-400 text-[10px] font-semibold uppercase tracking-wide">
+                      EV-Based
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-lg font-bold text-white">Play {rec.spots} spots</div>
+                  <p className="text-[10px] text-slate-600 mt-0.5">{tier.subtitle}</p>
+                </div>
+
+                {rec.evoChampion && (
+                  <p className="text-xs text-slate-400 italic">
+                    {summarizeChampion(rec)}
+                  </p>
                 )}
-              </div>
 
-              <div className="text-lg font-bold text-white">Play {rec.spots} spots</div>
-
-              {rec.evoChampion && (
-                <p className="text-xs text-slate-400 italic">
-                  {summarizeChampion(rec)}
-                </p>
-              )}
-
-              <div className="space-y-1 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Games to play</span>
-                  <span className="font-mono text-white">{rec.recommendedGames}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Wager per game</span>
-                  <span className="font-mono text-white">${wager}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Bonus to play</span>
-                  <span className="font-mono text-white">{rec.bonus.label}</span>
-                </div>
-                {rec.evoChampion?.result?.test_pnl_per_game != null ? (
+                <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Backtested P&L/game</span>
-                    <span className={`font-mono ${rec.evoChampion.result.test_pnl_per_game >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      ${rec.evoChampion.result.test_pnl_per_game.toFixed(3)}
+                    <span className="text-slate-500">Games to play</span>
+                    <span className="font-mono text-white font-bold">{rec.recommendedGames}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Base wager</span>
+                    <span className="font-mono text-white">${rec.evolvedWager}</span>
+                  </div>
+                  {rec.bonus.label !== 'Base' && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">With {rec.bonus.label}</span>
+                      <span className="font-mono text-white">
+                        ${rec.bonus.label === 'Super Bonus' ? rec.evolvedWager * 3 : rec.evolvedWager * 2}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Bonus to play</span>
+                    <span className="font-mono text-white">{rec.bonus.label}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Session cost</span>
+                    <span className="font-mono text-slate-300">
+                      ${(rec.recommendedGames * (rec.bonus.label === 'Super Bonus' ? rec.evolvedWager * 3 : rec.bonus.label === 'Bonus' ? rec.evolvedWager * 2 : rec.evolvedWager)).toFixed(2)}
                     </span>
                   </div>
-                ) : (
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">EV / $1 wagered</span>
-                    <span className="font-mono text-green-400">{(rec.evPerDollar * 100).toFixed(1)}¢</span>
-                  </div>
-                )}
-                {rec.evoChampion?.result?.win_rate != null && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Win rate</span>
-                    <span className="font-mono text-white">{(rec.evoChampion.result.win_rate * 100).toFixed(1)}%</span>
+                  {rec.evoChampion?.result?.test_pnl_per_game != null ? (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Backtested P&L/game</span>
+                      <span className={`font-mono ${rec.evoChampion.result.test_pnl_per_game >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${rec.evoChampion.result.test_pnl_per_game.toFixed(3)}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">EV / $1 wagered</span>
+                      <span className="font-mono text-green-400">{(rec.evPerDollar * 100).toFixed(1)}¢</span>
+                    </div>
+                  )}
+                  {rec.evoChampion?.result?.win_rate != null && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Win rate</span>
+                      <span className="font-mono text-white">{(rec.evoChampion.result.win_rate * 100).toFixed(1)}%</span>
+                    </div>
+                  )}
+                </div>
+
+                {rec.evoChampion?.result?.picks_snapshot && rec.evoChampion.result.picks_snapshot.length > 0 && (
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {rec.evoChampion.result.picks_snapshot.map(n => <Ball key={n} n={n} />)}
                   </div>
                 )}
               </div>
-
-              {rec.evoChampion?.result?.picks_snapshot && rec.evoChampion.result.picks_snapshot.length > 0 && (
-                <div className="flex flex-wrap gap-1 pt-1">
-                  {rec.evoChampion.result.picks_snapshot.map(n => <Ball key={n} n={n} />)}
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <p className="text-xs text-slate-500">
-          Arthur ranks these by testing strategies against thousands of real draws. &quot;Games to play&quot; gives the strategy
-          enough room to recover from cold streaks.
+          Each tier suits a different play style. Quick Play picks strategies with the highest win rate for fast action.
+          Marathon picks strategies with the strongest long-run edge — rare wins but bigger payouts.
           {!evoLoading && evoChampions.length === 0 && ' No champions promoted yet — run evolution to unlock Arthur\'s picks.'}
         </p>
       </div>

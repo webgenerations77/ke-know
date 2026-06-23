@@ -1,7 +1,7 @@
 import { createServiceClient } from '@/lib/supabase-server';
 import { generatePicks } from '@/lib/evolution/fitness';
 import { lookupPrize } from '@/lib/keno/prizes';
-import type { StrategyGenome } from '@/lib/evolution/genome';
+import { getWagerCost, type StrategyGenome } from '@/lib/evolution/genome';
 import type { Game } from '@/lib/supabase';
 
 const MAX_NEW_RESULTS_PER_RUN = 500;
@@ -51,7 +51,7 @@ export async function replayChampions(
     const spotCount = champ.spot_count as number;
     const genome = champ.genome as unknown as StrategyGenome;
     const bonusType = genome.bonus_type ?? 'none';
-    const wagerCost = bonusType === 'super_bonus' ? 3 : bonusType === 'bonus' ? 2 : 1;
+    const wagerCost = getWagerCost(genome);
 
     const { data: existingResults } = await db
       .from('live_results')
@@ -87,9 +87,8 @@ export async function replayChampions(
       is_shadow_play: boolean;
       bonus_type: string;
       bonus_multiplier: number;
+      source: string;
     }[] = [];
-
-    let addedPnl = 0;
 
     for (const gameIdx of toProcess) {
       const game = allGames[gameIdx];
@@ -107,7 +106,8 @@ export async function replayChampions(
         : 1;
 
       const basePrize = lookupPrize(spotCount, matches);
-      const effectivePrize = basePrize > 0 ? basePrize * drawnMultiplier : 0;
+      const baseWager = genome.wager ?? 1;
+      const effectivePrize = basePrize > 0 ? basePrize * baseWager * drawnMultiplier : 0;
       const pnl = effectivePrize - wagerCost;
 
       rows.push({
@@ -122,9 +122,8 @@ export async function replayChampions(
         is_shadow_play: true,
         bonus_type: bonusType,
         bonus_multiplier: drawnMultiplier,
+        source: 'replay',
       });
-
-      addedPnl += pnl;
 
       if (rows.length >= BATCH_INSERT_SIZE) {
         await db.from('live_results').upsert(rows, {
@@ -144,12 +143,8 @@ export async function replayChampions(
       totalNew += rows.length;
     }
 
-    const newPlays = (champ.real_world_plays as number) + toProcess.length;
-    const newPnl = (champ.real_world_pnl as number) + addedPnl;
-    await db.from('strategies').update({
-      real_world_plays: newPlays,
-      real_world_pnl: newPnl,
-    }).eq('id', strategyId);
+    // real_world_plays/pnl are only updated by scorePendingPredictions
+    // (genuine pre-committed predictions), not by retroactive replays
   }
 
   return { totalNew, championsProcessed: champions.length };

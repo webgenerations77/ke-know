@@ -461,6 +461,7 @@ export default function MonitorPage() {
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [rollingPerfOpen, setRollingPerfOpen] = useState(false);
   const [cronHealthOpen, setCronHealthOpen] = useState(false);
+  const [replayResults, setReplayResults] = useState<LiveResult[]>([]);
 
   const loadAll = useCallback(async () => {
     const [
@@ -474,7 +475,7 @@ export default function MonitorPage() {
       { data: latestGame },
     ] = await Promise.all([
       supabase.from('system_events').select('*').order('occurred_at', { ascending: false }).limit(100),
-      supabase.from('live_results').select('*').order('scored_at', { ascending: false }).limit(200),
+      supabase.from('live_results').select('*').eq('source', 'prediction').order('scored_at', { ascending: false }).limit(200),
       supabase.from('games').select('*').order('game_num', { ascending: false }).limit(20),
       supabase.from('evolution_state').select('*').eq('id', 1).single(),
       supabase.from('strategies').select('id,spot_count,generation').eq('status', 'promoted').order('spot_count'),
@@ -491,6 +492,7 @@ export default function MonitorPage() {
       const { data: page } = await supabase
         .from('live_results')
         .select('*')
+        .eq('source', 'prediction')
         .order('scored_at', { ascending: false })
         .range(offset, offset + PAGE - 1);
       if (!page || page.length === 0) break;
@@ -499,16 +501,34 @@ export default function MonitorPage() {
       offset += PAGE;
     }
 
+    // Load replay results for evolution stats (separate from live predictions)
+    const allReplays: LiveResult[] = [];
+    let rOffset = 0;
+    while (true) {
+      const { data: rPage } = await supabase
+        .from('live_results')
+        .select('*')
+        .eq('source', 'replay')
+        .order('scored_at', { ascending: false })
+        .range(rOffset, rOffset + PAGE - 1);
+      if (!rPage || rPage.length === 0) break;
+      allReplays.push(...(rPage as LiveResult[]));
+      if (rPage.length < PAGE) break;
+      rOffset += PAGE;
+    }
+
     if (evts) setEvents(evts as SystemEvent[]);
     if (results) setLiveResults(results as LiveResult[]);
     setAllLiveResults(allResults);
+    setReplayResults(allReplays);
     if (games) setRecentGames(games as Game[]);
     if (evo) setEvoState(evo as EvolutionState);
     if (count !== null) setTotalGames(count);
     if (latestGame) setLatestGameTs(latestGame.draw_iso);
 
     // Load strategy→generation mapping for all strategies that have live results
-    const stratIds = [...new Set(allResults.map(r => r.strategy_id))];
+    const allResultsForMapping = [...allResults, ...allReplays];
+    const stratIds = [...new Set(allResultsForMapping.map(r => r.strategy_id))];
     if (stratIds.length > 0) {
       const genMap = new Map<number, number>();
       for (let i = 0; i < stratIds.length; i += 100) {
@@ -582,8 +602,10 @@ export default function MonitorPage() {
       .channel('monitor_live_results')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_results' },
         payload => {
-          setLiveResults(prev => [payload.new as LiveResult, ...prev].slice(0, 200));
-          setAllLiveResults(prev => [payload.new as LiveResult, ...prev]);
+          const newResult = payload.new as LiveResult;
+          if (newResult.source === 'replay') return;
+          setLiveResults(prev => [newResult, ...prev].slice(0, 200));
+          setAllLiveResults(prev => [newResult, ...prev]);
         })
       .subscribe();
 
@@ -683,7 +705,11 @@ export default function MonitorPage() {
     : null;
 
   // Biggest win per day for past 14 days
-  const biggestWinByDay: { date: string; prize: number; spotCount: number; matches: number; gameNum: number }[] = [];
+  const biggestWinByDay: {
+    date: string; prize: number; spotCount: number; matches: number;
+    gameNum: number; picks: number[]; actualHits: number[];
+    bonusType: string; bonusMultiplier: number; consecutiveGames: number;
+  }[] = [];
   const last14Days = new Map<string, LiveResult>();
   for (const r of allLiveResults) {
     const dateKey = new Date(r.scored_at).toLocaleDateString('en-CA');
@@ -694,16 +720,48 @@ export default function MonitorPage() {
   }
   const sortedDays = [...last14Days.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 14);
   for (const [date, r] of sortedDays) {
+    // Count consecutive games these same picks were played by this strategy
+    const pickKey = JSON.stringify([...r.picks].sort((a, b) => a - b));
+    const samePickResults = allLiveResults
+      .filter(lr => lr.strategy_id === r.strategy_id && lr.spot_count === r.spot_count)
+      .sort((a, b) => a.game_num - b.game_num);
+    let consecutive = 0;
+    const winIdx = samePickResults.findIndex(lr => lr.game_num === r.game_num);
+    if (winIdx >= 0) {
+      consecutive = 1;
+      // Count backwards from the winning game
+      for (let i = winIdx - 1; i >= 0; i--) {
+        const prev = samePickResults[i];
+        if (JSON.stringify([...prev.picks].sort((a, b) => a - b)) === pickKey
+            && prev.game_num === samePickResults[i + 1].game_num - 1) {
+          consecutive++;
+        } else break;
+      }
+      // Count forwards
+      for (let i = winIdx + 1; i < samePickResults.length; i++) {
+        const next = samePickResults[i];
+        if (JSON.stringify([...next.picks].sort((a, b) => a - b)) === pickKey
+            && next.game_num === samePickResults[i - 1].game_num + 1) {
+          consecutive++;
+        } else break;
+      }
+    }
+
     biggestWinByDay.push({
       date,
       prize: r.prize,
       spotCount: r.spot_count,
       matches: r.matches,
       gameNum: r.game_num,
+      picks: r.picks,
+      actualHits: r.actual_hits,
+      bonusType: r.bonus_type,
+      bonusMultiplier: r.bonus_multiplier,
+      consecutiveGames: consecutive,
     });
   }
 
-  // Evolution generation breakdown from allLiveResults using full strategy→generation map
+  // Evolution generation breakdown — live predictions
   const genBreakdown = new Map<number, { wins: number; losses: number; pnl: number; total: number }>();
   for (const r of allLiveResults) {
     const gen = stratGenMap.get(r.strategy_id) ?? 0;
@@ -717,6 +775,27 @@ export default function MonitorPage() {
   const genRows = [...genBreakdown.entries()]
     .filter(([gen]) => gen > 0)
     .sort((a, b) => b[0] - a[0]);
+
+  // Replay/historical breakdown per generation
+  const replayBreakdown = new Map<number, { wins: number; losses: number; pnl: number; total: number }>();
+  for (const r of replayResults) {
+    const gen = stratGenMap.get(r.strategy_id) ?? 0;
+    const entry = replayBreakdown.get(gen) ?? { wins: 0, losses: 0, pnl: 0, total: 0 };
+    entry.total++;
+    entry.pnl += r.pnl;
+    if (r.prize > 0) entry.wins++;
+    else entry.losses++;
+    replayBreakdown.set(gen, entry);
+  }
+
+  // Totals for the Evolution preview card
+  const replayTotals = { wins: 0, losses: 0, pnl: 0, total: 0 };
+  for (const [, b] of replayBreakdown) {
+    replayTotals.wins += b.wins;
+    replayTotals.losses += b.losses;
+    replayTotals.pnl += b.pnl;
+    replayTotals.total += b.total;
+  }
 
   const SPOT_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#8b5cf6','#ec4899','#94a3b8','#f1f5f9'];
 
@@ -915,7 +994,9 @@ export default function MonitorPage() {
         <StatCard
           label="Evolution"
           value={evoState?.current_generation ? `Gen ${evoState.current_generation}` : 'Not started'}
-          sub={evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
+          sub={replayTotals.total > 0
+            ? `Backtested: ${replayTotals.wins}W–${replayTotals.losses}L · ${replayTotals.pnl >= 0 ? '+' : ''}$${replayTotals.pnl.toFixed(2)}`
+            : evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
           ok={!lastEvo || lastEvo.severity !== 'error'}
           onClick={() => setEvoDetailOpen(o => !o)}
         />
@@ -924,12 +1005,84 @@ export default function MonitorPage() {
       {/* ── Evolution Generation Breakdown ── */}
       {evoDetailOpen && (
         <div className="bg-surface rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
-            <h2 className="font-semibold text-sm">Performance by Generation</h2>
-            <span className="text-xs text-slate-500">{genRows.length} gens</span>
+          <div className="px-4 py-3 border-b border-[#2a2a2e]">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm">Performance by Generation</h2>
+              <span className="text-xs text-slate-500">{genRows.length} gens</span>
+            </div>
+            {evoState?.last_run_at && (
+              <p className="text-[10px] text-slate-600 mt-1">Last evolved: {fmtDate(evoState.last_run_at)}</p>
+            )}
+          </div>
+
+          {/* Backtested (replay) summary */}
+          {replayTotals.total > 0 && (
+            <div className="px-4 py-3 border-b border-[#2a2a2e] bg-[#0e0e10]">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Historical Backtest</span>
+                <span className="text-[10px] text-slate-700">(replay — not counted in live stats)</span>
+              </div>
+              <div className="overflow-x-auto max-h-48">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-600 border-b border-[#1e1e24]">
+                      <th className="px-3 py-1.5 text-left">Gen</th>
+                      <th className="px-3 py-1.5 text-left">W–L</th>
+                      <th className="px-3 py-1.5 text-right">Games</th>
+                      <th className="px-3 py-1.5 text-right">P&L</th>
+                      <th className="px-3 py-1.5 text-right">P&L/g</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...replayBreakdown.entries()]
+                      .filter(([gen]) => gen > 0)
+                      .sort((a, b) => b[0] - a[0])
+                      .map(([gen, b]) => (
+                        <tr key={gen} className="border-b border-[#1a1a1e]">
+                          <td className="px-3 py-1.5 font-mono text-slate-500">
+                            {gen}{gen === evoState?.current_generation && <span className="ml-1 text-crimson text-[9px]">NOW</span>}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <span className="text-green-500/70">{b.wins}W</span>
+                            <span className="text-slate-600 mx-0.5">–</span>
+                            <span className="text-red-400/70">{b.losses}L</span>
+                          </td>
+                          <td className="px-3 py-1.5 text-right text-slate-500">{b.total}</td>
+                          <td className={`px-3 py-1.5 text-right font-mono ${b.pnl >= 0 ? 'text-green-500/70' : 'text-red-400/70'}`}>
+                            {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(2)}
+                          </td>
+                          <td className={`px-3 py-1.5 text-right font-mono ${b.pnl >= 0 ? 'text-green-500/70' : 'text-red-400/70'}`}>
+                            ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
+                          </td>
+                        </tr>
+                      ))}
+                    <tr className="border-t border-[#2a2a2e] text-slate-400">
+                      <td className="px-3 py-1.5 font-semibold">Total</td>
+                      <td className="px-3 py-1.5">
+                        <span className="text-green-500/70">{replayTotals.wins}W</span>
+                        <span className="text-slate-600 mx-0.5">–</span>
+                        <span className="text-red-400/70">{replayTotals.losses}L</span>
+                      </td>
+                      <td className="px-3 py-1.5 text-right">{replayTotals.total}</td>
+                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${replayTotals.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {replayTotals.pnl >= 0 ? '+' : ''}${replayTotals.pnl.toFixed(2)}
+                      </td>
+                      <td className={`px-3 py-1.5 text-right font-mono ${replayTotals.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${replayTotals.total > 0 ? (replayTotals.pnl / replayTotals.total).toFixed(3) : '0.000'}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Live predictions by generation */}
+          <div className="px-4 py-2 border-b border-[#2a2a2e]">
+            <span className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Live Predictions</span>
           </div>
           {genRows.length === 0 ? (
-            <p className="px-4 py-6 text-slate-500 text-sm">No scored shadow plays yet.</p>
+            <p className="px-4 py-6 text-slate-500 text-sm">No scored live predictions yet.</p>
           ) : (
             <div className="overflow-x-auto max-h-72">
               <table className="w-full text-xs">
@@ -995,7 +1148,9 @@ export default function MonitorPage() {
                     <th className="px-3 py-2 text-right">Prize</th>
                     <th className="px-3 py-2 text-center">Spot</th>
                     <th className="px-3 py-2 text-center hidden sm:table-cell">Matches</th>
-                    <th className="px-3 py-2 text-right hidden sm:table-cell">Game #</th>
+                    <th className="px-3 py-2 text-center">Bonus</th>
+                    <th className="px-3 py-2 text-center hidden sm:table-cell">Run</th>
+                    <th className="px-3 py-2 text-left">Numbers Played</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1009,7 +1164,38 @@ export default function MonitorPage() {
                       </td>
                       <td className="px-3 py-2 text-center text-slate-400">{row.prize > 0 ? `${row.spotCount}-sp` : '—'}</td>
                       <td className="px-3 py-2 text-center text-slate-400 hidden sm:table-cell">{row.prize > 0 ? `${row.matches}/${row.spotCount}` : '—'}</td>
-                      <td className="px-3 py-2 text-right font-mono text-slate-500 hidden sm:table-cell">#{row.gameNum}</td>
+                      <td className="px-3 py-2 text-center">
+                        {row.bonusType === 'super_bonus' ? (
+                          <span className="text-purple-400 font-semibold">SB{row.bonusMultiplier > 1 ? ` ×${row.bonusMultiplier}` : ''}</span>
+                        ) : row.bonusType === 'bonus' ? (
+                          <span className="text-amber-400 font-semibold">B{row.bonusMultiplier > 1 ? ` ×${row.bonusMultiplier}` : ''}</span>
+                        ) : (
+                          <span className="text-slate-600">Base</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-center text-slate-400 hidden sm:table-cell">
+                        {row.consecutiveGames > 0 ? `${row.consecutiveGames}g` : '—'}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.prize > 0 ? (
+                          <div className="flex flex-wrap gap-0.5">
+                            {[...row.picks].sort((a, b) => a - b).map(n => (
+                              <span
+                                key={n}
+                                className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                                  row.actualHits.includes(n)
+                                    ? 'bg-crimson text-white'
+                                    : 'bg-[#2a2a2e] text-slate-400'
+                                }`}
+                              >
+                                {n}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

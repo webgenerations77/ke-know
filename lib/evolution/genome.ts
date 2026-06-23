@@ -6,38 +6,34 @@ export interface StrategyGenome {
   recency_boost_multiplier: number;
   gap_weight: number;
   gap_threshold: number;
-  cluster_bias: number;
-  bonus_correlation_weight: number;
-  time_bias_weight: number;
-  streak_weight: number;
-  w_frequency: number;
-  w_recency: number;
-  w_gap: number;
-  w_streak: number;
-  w_bonus_corr: number;
-  w_time: number;
   bonus_type: 'none' | 'bonus' | 'super_bonus';
+  hot_cold_balance: number;
+  pick_noise: number;
+  pair_weight: number;
+  lookback_step: number;
+  wager: number;
+}
+
+export function getWagerCost(genome: StrategyGenome): number {
+  const base = genome.wager ?? 1;
+  const multiplier = genome.bonus_type === 'super_bonus' ? 3 : genome.bonus_type === 'bonus' ? 2 : 1;
+  return base * multiplier;
 }
 
 export const GENOME_RANGES: Record<keyof StrategyGenome, [number | string, number | string]> = {
-  lookback_games:           [50,   400],
+  lookback_games:           [50,   500],
   weighting_method:         ['raw', 'exponential_decay'],
-  decay_rate:               [0.001, 0.1],
-  recency_boost_cutoff:     [1,    20],
+  decay_rate:               [0.001, 0.15],
+  recency_boost_cutoff:     [1,    30],
   recency_boost_multiplier: [1.0,  5.0],
-  gap_weight:               [0.0,  1.0],
-  gap_threshold:            [5,    50],
-  cluster_bias:             [-1.0, 1.0],
-  bonus_correlation_weight: [0.0,  1.0],
-  time_bias_weight:         [0.0,  1.0],
-  streak_weight:            [0.0,  1.0],
-  w_frequency:              [0.0,  1.0],
-  w_recency:                [0.0,  1.0],
-  w_gap:                    [0.0,  1.0],
-  w_streak:                 [0.0,  1.0],
-  w_bonus_corr:             [0.0,  1.0],
-  w_time:                   [0.0,  1.0],
+  gap_weight:               [0.0,  2.0],
+  gap_threshold:            [3,    80],
   bonus_type:               ['none', 'super_bonus'],
+  hot_cold_balance:         [-1.0, 1.0],
+  pick_noise:               [0.0,  0.3],
+  pair_weight:              [0.0,  1.0],
+  lookback_step:            [1,    5],
+  wager:                    [1,    5],
 };
 
 const WEIGHTING_METHODS: StrategyGenome['weighting_method'][] = [
@@ -45,6 +41,10 @@ const WEIGHTING_METHODS: StrategyGenome['weighting_method'][] = [
 ];
 
 const BONUS_TYPES: StrategyGenome['bonus_type'][] = ['none', 'bonus', 'super_bonus'];
+
+const INTEGER_KEYS = new Set<keyof StrategyGenome>([
+  'lookback_games', 'recency_boost_cutoff', 'gap_threshold', 'lookback_step', 'wager',
+]);
 
 function rand(min: number, max: number): number {
   return min + Math.random() * (max - min);
@@ -56,26 +56,71 @@ function randInt(min: number, max: number): number {
 
 export function randomGenome(): StrategyGenome {
   return {
-    lookback_games:           randInt(50, 400),
+    lookback_games:           randInt(50, 500),
     weighting_method:         WEIGHTING_METHODS[Math.floor(Math.random() * 3)],
-    decay_rate:               rand(0.001, 0.1),
-    recency_boost_cutoff:     randInt(1, 20),
+    decay_rate:               rand(0.001, 0.15),
+    recency_boost_cutoff:     randInt(1, 30),
     recency_boost_multiplier: rand(1.0, 5.0),
-    gap_weight:               rand(0.0, 1.0),
-    gap_threshold:            randInt(5, 50),
-    cluster_bias:             rand(-1.0, 1.0),
-    bonus_correlation_weight: rand(0.0, 1.0),
-    time_bias_weight:         rand(0.0, 1.0),
-    streak_weight:            rand(0.0, 1.0),
-    w_frequency:              rand(0.0, 1.0),
-    w_recency:                rand(0.0, 1.0),
-    w_gap:                    rand(0.0, 1.0),
-    w_streak:                 rand(0.0, 1.0),
-    w_bonus_corr:             rand(0.0, 1.0),
-    w_time:                   rand(0.0, 1.0),
+    gap_weight:               rand(0.0, 2.0),
+    gap_threshold:            randInt(3, 80),
     bonus_type:               BONUS_TYPES[Math.floor(Math.random() * 3)],
+    hot_cold_balance:         rand(-1.0, 1.0),
+    pick_noise:               rand(0.0, 0.3),
+    pair_weight:              rand(0.0, 1.0),
+    lookback_step:            randInt(1, 5),
+    wager:                    randInt(1, 5),
   };
 }
+
+export function heuristicGenome(archetype: 'momentum' | 'contrarian' | 'balanced' | 'bonus_hunter', bonusOverride?: 'bonus' | 'super_bonus'): StrategyGenome {
+  const base = randomGenome();
+  switch (archetype) {
+    case 'momentum':
+      return {
+        ...base,
+        lookback_games: randInt(50, 80),
+        weighting_method: 'exponential_decay',
+        decay_rate: rand(0.05, 0.12),
+        recency_boost_cutoff: randInt(5, 15),
+        recency_boost_multiplier: rand(2.5, 4.5),
+        gap_weight: rand(0.0, 0.3),
+        hot_cold_balance: rand(0.5, 1.0),
+        pick_noise: rand(0.0, 0.1),
+      };
+    case 'contrarian':
+      return {
+        ...base,
+        lookback_games: randInt(150, 250),
+        weighting_method: 'linear_decay',
+        gap_weight: rand(1.0, 2.0),
+        gap_threshold: randInt(10, 40),
+        hot_cold_balance: rand(-1.0, -0.5),
+        pick_noise: rand(0.0, 0.15),
+      };
+    case 'balanced':
+      return {
+        ...base,
+        lookback_games: randInt(300, 500),
+        weighting_method: 'raw',
+        recency_boost_multiplier: rand(1.0, 2.0),
+        gap_weight: rand(0.3, 0.8),
+        hot_cold_balance: rand(-0.2, 0.2),
+        pick_noise: rand(0.0, 0.05),
+        pair_weight: rand(0.3, 0.7),
+      };
+    case 'bonus_hunter':
+      return {
+        ...base,
+        bonus_type: bonusOverride ?? (Math.random() < 0.5 ? 'bonus' : 'super_bonus'),
+      };
+  }
+}
+
+const NUMERIC_KEYS: (keyof StrategyGenome)[] = [
+  'lookback_games', 'decay_rate', 'recency_boost_cutoff', 'recency_boost_multiplier',
+  'gap_weight', 'gap_threshold', 'hot_cold_balance', 'pick_noise', 'pair_weight', 'lookback_step',
+  'wager',
+];
 
 export function mutateGenome(
   genome: StrategyGenome,
@@ -86,51 +131,35 @@ export function mutateGenome(
   const g = { ...genome };
   const log: string[] = [];
 
-  const numericKeys = [
-    'lookback_games', 'decay_rate', 'recency_boost_cutoff', 'recency_boost_multiplier',
-    'gap_weight', 'gap_threshold', 'cluster_bias', 'bonus_correlation_weight',
-    'time_bias_weight', 'streak_weight',
-    'w_frequency', 'w_recency', 'w_gap', 'w_streak', 'w_bonus_corr', 'w_time',
-  ] as (keyof StrategyGenome)[];
-
-  // Pick random params to mutate
-  const shuffled = [...numericKeys].sort(() => Math.random() - 0.5);
+  const shuffled = [...NUMERIC_KEYS].sort(() => Math.random() - 0.5);
   const toMutate = shuffled.slice(0, numParams);
 
-  // Maybe mutate categorical genes
   if (Math.random() < 0.15) {
     g.weighting_method = WEIGHTING_METHODS[Math.floor(Math.random() * 3)];
-    log.push(`weighting_method → ${g.weighting_method}`);
+    log.push(`weighting_method -> ${g.weighting_method}`);
   }
   if (Math.random() < 0.20) {
     g.bonus_type = BONUS_TYPES[Math.floor(Math.random() * 3)];
-    log.push(`bonus_type → ${g.bonus_type}`);
+    log.push(`bonus_type -> ${g.bonus_type}`);
   }
 
   for (const key of toMutate) {
     const range = GENOME_RANGES[key] as [number, number];
-    const span = (range[1] as number) - (range[0] as number);
+    const span = range[1] - range[0];
     const oldVal = g[key] as number;
 
     if (Math.random() < largeMutationProb) {
-      // Full re-randomize
-      const newVal = key === 'lookback_games' || key === 'recency_boost_cutoff' || key === 'gap_threshold'
-        ? randInt(range[0] as number, range[1] as number)
-        : rand(range[0] as number, range[1] as number);
+      const newVal = INTEGER_KEYS.has(key)
+        ? randInt(range[0], range[1])
+        : rand(range[0], range[1]);
       (g as any)[key] = newVal;
-      log.push(`${key}: ${oldVal.toFixed ? oldVal.toFixed(3) : oldVal} → ${(newVal as number).toFixed ? (newVal as number).toFixed(3) : newVal} (full randomize)`);
+      log.push(`${key}: ${typeof oldVal === 'number' && oldVal.toFixed ? oldVal.toFixed(3) : oldVal} -> ${typeof newVal === 'number' && newVal.toFixed ? newVal.toFixed(3) : newVal} (full randomize)`);
     } else {
-      // Small nudge
       const delta = (Math.random() * 2 - 1) * mutationRate * span;
-      const newVal = Math.min(
-        range[1] as number,
-        Math.max(range[0] as number, (oldVal as number) + delta)
-      );
-      const rounded = key === 'lookback_games' || key === 'recency_boost_cutoff' || key === 'gap_threshold'
-        ? Math.round(newVal)
-        : newVal;
-      (g as any)[key] = rounded;
-      log.push(`${key}: ${(oldVal as number).toFixed(3)} → ${rounded.toFixed ? rounded.toFixed(3) : rounded} (±${(delta >= 0 ? '+' : '')}${delta.toFixed(3)})`);
+      let newVal = Math.min(range[1], Math.max(range[0], oldVal + delta));
+      if (INTEGER_KEYS.has(key)) newVal = Math.round(newVal);
+      (g as any)[key] = newVal;
+      log.push(`${key}: ${oldVal.toFixed(3)} -> ${typeof newVal === 'number' && newVal.toFixed ? newVal.toFixed(3) : newVal} (delta ${delta >= 0 ? '+' : ''}${delta.toFixed(3)})`);
     }
   }
 
@@ -145,54 +174,62 @@ export function crossoverGenome(a: StrategyGenome, b: StrategyGenome): { genome:
   for (const key of keys) {
     if (Math.random() < 0.5) {
       (g as any)[key] = b[key];
-      log.push(`${key} ← parent B`);
+      log.push(`${key} <- parent B`);
     }
   }
 
   return { genome: g, log };
 }
 
-/** Render a genome as plain English for display. */
 export function describeGenome(genome: StrategyGenome): string {
   const parts: string[] = [];
 
   parts.push(`Analyzes last ${genome.lookback_games} games`);
 
+  if (genome.lookback_step > 1) {
+    parts.push(`sampling every ${genome.lookback_step}${genome.lookback_step === 2 ? 'nd' : genome.lookback_step === 3 ? 'rd' : 'th'} game`);
+  }
+
   if (genome.weighting_method === 'raw') {
     parts.push('weights all draws equally');
   } else if (genome.weighting_method === 'linear_decay') {
-    parts.push(`fades older draws linearly`);
+    parts.push('fades older draws linearly');
   } else {
     parts.push(`exponentially fades older draws (rate ${genome.decay_rate.toFixed(3)})`);
   }
 
   if (genome.recency_boost_multiplier > 1.5) {
-    parts.push(`boosts last ${genome.recency_boost_cutoff} games by ${genome.recency_boost_multiplier.toFixed(1)}×`);
+    parts.push(`boosts last ${genome.recency_boost_cutoff} games by ${genome.recency_boost_multiplier.toFixed(1)}x`);
   }
 
   if (genome.gap_weight > 0.3) {
     parts.push(`strong overdue bias (threshold ${genome.gap_threshold} games)`);
   } else if (genome.gap_weight > 0.1) {
-    parts.push(`light overdue bias`);
+    parts.push('light overdue bias');
   }
 
-  if (genome.bonus_correlation_weight > 0.4) {
-    parts.push('heavy bonus correlation weighting');
+  if (genome.hot_cold_balance > 0.3) {
+    parts.push('momentum player (chases hot numbers)');
+  } else if (genome.hot_cold_balance < -0.3) {
+    parts.push('contrarian (prefers cold numbers)');
   }
 
+  if (genome.pair_weight > 0.3) {
+    parts.push('uses pair co-occurrence patterns');
+  }
+
+  if (genome.pick_noise > 0.1) {
+    parts.push(`${(genome.pick_noise * 100).toFixed(0)}% pick randomization`);
+  }
+
+  const baseWager = genome.wager ?? 1;
   const bonusType = genome.bonus_type ?? 'none';
   if (bonusType === 'bonus') {
-    parts.push('plays Bonus (2× cost, prize multiplied by drawn Bonus number)');
+    parts.push(`$${baseWager} base + Bonus ($${baseWager * 2}/game)`);
   } else if (bonusType === 'super_bonus') {
-    parts.push('plays Super Bonus (3× cost, prize multiplied by drawn Super Bonus number)');
-  }
-
-  const wSum = genome.w_frequency + genome.w_recency + genome.w_gap + genome.w_streak;
-  if (wSum > 0) {
-    const pct = (w: number) => Math.round((w / wSum) * 100);
-    parts.push(
-      `score mix: ${pct(genome.w_frequency)}% frequency / ${pct(genome.w_recency)}% recency / ${pct(genome.w_gap)}% gap / ${pct(genome.w_streak)}% streak`
-    );
+    parts.push(`$${baseWager} base + Super Bonus ($${baseWager * 3}/game)`);
+  } else if (baseWager > 1) {
+    parts.push(`$${baseWager}/game wager`);
   }
 
   return parts.join(' · ');

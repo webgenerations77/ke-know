@@ -38,11 +38,11 @@ Maryland Lottery API → /api/poll (every 4min) → games table
 
 A genetic algorithm that breeds Keno number-picking strategies:
 
-- **Genome** (`genome.ts`): 18 genes controlling lookback window, weighting method, decay rates, gap detection, bonus type, and signal mixing weights
-- **Fitness** (`fitness.ts`): Simulates each strategy against all historical games (train/test split). Uses TypedArrays for performance. Fitness = 50% test PPG + 30% live PPG + 10% win rate + 5% consistency + 5% real-world bonus
-- **Evolution** (`evolve.ts`): 20 strategies per spot count (1-10), 10 survive. Breed via 40% crossover / 60% mutation. Mutation rate decays over generations. Champions promoted per spot count if they beat the incumbent
+- **Genome** (`genome.ts`): 13 active genes controlling lookback window, weighting method, decay rates, gap detection, hot/cold balance, pair co-occurrence, pick noise, lookback step, bonus type, and wager ($1-$5 base). Heuristic seeding produces momentum, contrarian, balanced, and bonus-hunter archetypes. `getWagerCost(genome)` computes total per-game cost (base wager × bonus multiplier)
+- **Fitness** (`fitness.ts`): 3-fold temporal cross-validation (not single train/test split). Fitness = 35% OOS PPG + 35% trust-scaled live PPG + 15% overfit penalty + 10% risk-adjusted return + 5% diversity bonus. Live PPG only counts genuine pre-committed predictions (source='prediction'), not replays. Trust scaling: sqrt(n/100) clamped to [0,1]
+- **Evolution** (`evolve.ts`): 20 strategies per spot count (1-10), 10 survive. SUS parent selection, 40% crossover / 60% mutation, 2 random immigrants per generation. Mutation rate: 50%->35%->20%->12% (never below 12%). Champions promoted per spot count if they beat the incumbent
 
-Key constraint: promotion requires positive test PnL/game OR 10%+ higher fitness with better test PPG than current champion. This prevents strategies that only look good on paper from being promoted.
+Key constraint: promotion requires positive OOS P&L/game OR 10%+ higher fitness with better OOS PPG than current champion. The `live_results.source` column distinguishes pre-committed predictions from retroactive replays.
 
 ### Cron System
 
@@ -100,7 +100,7 @@ Arthur is a stateless AI personality on the Live Monitor page. His thought engin
 
 ### Simulator & Replay System (`lib/replay.ts`)
 
-The replay engine (`replayChampions()`) retroactively scores promoted champion strategies against historical games they haven't been scored on. This feeds the fitness function's live performance component (30% weight). Key constraint: picks for game N only use games 1..N-1 as context (no look-ahead). Capped at 500 new results per sync run. Unique index on `live_results(strategy_id, game_num)` prevents duplicates.
+The replay engine (`replayChampions()`) retroactively scores promoted champion strategies against historical games they haven't been scored on. Results are tagged `source='replay'` in `live_results` — the fitness function only trusts `source='prediction'` for live PPG. Key constraint: picks for game N only use games 1..N-1 as context (no look-ahead). Capped at 500 new results per sync run. Unique index on `live_results(strategy_id, game_num)` prevents duplicates.
 
 ### Push Notifications (`lib/notify.ts`)
 

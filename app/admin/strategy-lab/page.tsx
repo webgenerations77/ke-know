@@ -57,7 +57,7 @@ export default function StrategyLabPage() {
   const [genFitness, setGenFitness] = useState<{ generation: number; [k: string]: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterSpot, setFilterSpot] = useState(0);
-  const [sortKey, setSortKey] = useState<'fitness_score' | 'test_pnl_per_game' | 'live_ppg' | 'win_rate'>('fitness_score');
+  const [sortKey, setSortKey] = useState<'fitness_score' | 'oos_ppg' | 'live_ppg' | 'win_rate'>('fitness_score');
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [explorer, setExplorer] = useState<GenomeExplorer>({ open: false, strategy: null, history: [] });
 
@@ -173,9 +173,9 @@ export default function StrategyLabPage() {
       if (sortKey === 'fitness_score') {
         av = a.latestResult?.fitness_score ?? -999;
         bv = b.latestResult?.fitness_score ?? -999;
-      } else if (sortKey === 'test_pnl_per_game') {
-        av = a.latestResult?.test_pnl_per_game ?? -999;
-        bv = b.latestResult?.test_pnl_per_game ?? -999;
+      } else if (sortKey === 'oos_ppg') {
+        av = a.latestResult?.oos_ppg ?? a.latestResult?.test_pnl_per_game ?? -999;
+        bv = b.latestResult?.oos_ppg ?? b.latestResult?.test_pnl_per_game ?? -999;
       } else if (sortKey === 'live_ppg') {
         av = a.livePnlPerGame;
         bv = b.livePnlPerGame;
@@ -227,10 +227,10 @@ export default function StrategyLabPage() {
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4 text-sm">
             {[
               { label: 'Fitness', value: overallChamp.latestResult?.fitness_score?.toFixed(4) ?? '—' },
-              { label: 'Test P&L/game', value: overallChamp.latestResult?.test_pnl_per_game != null ? `$${overallChamp.latestResult.test_pnl_per_game.toFixed(3)}` : '—' },
+              { label: 'OOS P&L/game', value: overallChamp.latestResult?.oos_ppg != null ? `$${overallChamp.latestResult.oos_ppg.toFixed(3)}` : overallChamp.latestResult?.test_pnl_per_game != null ? `$${overallChamp.latestResult.test_pnl_per_game.toFixed(3)}` : '—' },
               { label: 'Live P&L/game', value: overallChamp.livePlays > 0 ? `$${overallChamp.livePnlPerGame.toFixed(3)}` : '—' },
-              { label: 'Win Rate', value: overallChamp.latestResult?.win_rate != null ? `${(overallChamp.latestResult.win_rate * 100).toFixed(1)}%` : '—' },
-              { label: 'Max Streak', value: `${overallChamp.latestResult?.max_losing_streak ?? '—'} L` },
+              { label: 'Trust Factor', value: overallChamp.latestResult?.live_trust_factor != null ? `${(overallChamp.latestResult.live_trust_factor * 100).toFixed(0)}%` : '—' },
+              { label: 'Overfit Gap', value: overallChamp.latestResult?.overfit_gap != null ? overallChamp.latestResult.overfit_gap.toFixed(4) : '—' },
             ].map(({ label, value }) => (
               <div key={label} className="bg-[#0e0e10] rounded-lg p-3">
                 <div className="text-xs text-slate-500">{label}</div>
@@ -281,9 +281,9 @@ export default function StrategyLabPage() {
                         <span>{champ.latestResult?.fitness_score?.toFixed(3) ?? '—'}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-600">Test PPG</span>
-                        <span className={champ.latestResult?.test_pnl_per_game != null && champ.latestResult.test_pnl_per_game >= 0 ? 'text-green-400' : 'text-red-400'}>
-                          {champ.latestResult?.test_pnl_per_game != null ? `$${champ.latestResult.test_pnl_per_game.toFixed(3)}` : '—'}
+                        <span className="text-slate-600">OOS PPG</span>
+                        <span className={(champ.latestResult?.oos_ppg ?? champ.latestResult?.test_pnl_per_game ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                          {champ.latestResult?.oos_ppg != null ? `$${champ.latestResult.oos_ppg.toFixed(3)}` : champ.latestResult?.test_pnl_per_game != null ? `$${champ.latestResult.test_pnl_per_game.toFixed(3)}` : '—'}
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -326,7 +326,7 @@ export default function StrategyLabPage() {
                 <th className="px-3 py-2 text-left">Spots</th>
                 <th className="px-3 py-2 text-left">Gen</th>
                 {colHeader('fitness_score', 'Fitness')}
-                {colHeader('test_pnl_per_game', 'Test PPG')}
+                {colHeader('oos_ppg', 'OOS PPG')}
                 {colHeader('live_ppg', 'Live PPG')}
                 {colHeader('win_rate', 'Win%')}
                 <th className="px-3 py-2 text-left">MaxL</th>
@@ -346,7 +346,7 @@ export default function StrategyLabPage() {
                     {s.latestResult?.fitness_score?.toFixed(4) ?? '—'}
                   </td>
                   <td className="px-3 py-2">
-                    <PnlBadge value={s.latestResult?.test_pnl_per_game} />
+                    <PnlBadge value={s.latestResult?.oos_ppg ?? s.latestResult?.test_pnl_per_game} />
                   </td>
                   <td className="px-3 py-2">
                     {s.livePlays > 0 ? <PnlBadge value={s.livePnlPerGame} /> : <span className="text-slate-600">—</span>}
@@ -422,6 +422,7 @@ export default function StrategyLabPage() {
                 <tr className="text-slate-500 border-b border-[#2a2a2e]">
                   <th className="px-3 py-2 text-left">Game</th>
                   <th className="px-3 py-2 text-left">Strategy</th>
+                  <th className="px-3 py-2 text-left">Source</th>
                   <th className="px-3 py-2 text-left">Spots</th>
                   <th className="px-3 py-2 text-left">Bonus</th>
                   <th className="px-3 py-2 text-left">Picks</th>
@@ -434,10 +435,16 @@ export default function StrategyLabPage() {
                 {recentLive.map(r => {
                   const bt = r.bonus_type ?? 'none';
                   const bm = r.bonus_multiplier ?? 1;
+                  const src = r.source ?? 'replay';
                   return (
                   <tr key={r.id} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
                     <td className="px-3 py-2 font-mono text-slate-400">#{r.game_num}</td>
                     <td className="px-3 py-2 text-slate-500">#{r.strategy_id}</td>
+                    <td className="px-3 py-2">
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${src === 'prediction' ? 'bg-green-500/20 text-green-300' : 'bg-slate-600/30 text-slate-400'}`}>
+                        {src === 'prediction' ? 'LIVE' : 'RPL'}
+                      </span>
+                    </td>
                     <td className="px-3 py-2">{r.spot_count}</td>
                     <td className="px-3 py-2">
                       {bt === 'none' ? (
@@ -521,17 +528,18 @@ export default function StrategyLabPage() {
                     {[
                       ['Fitness Score', explorer.strategy.latestResult.fitness_score?.toFixed(4)],
                       ['Wager/game', `$${explorer.strategy.latestResult.wager_assumed ?? 1}`],
+                      ['OOS P&L/game', explorer.strategy.latestResult.oos_ppg != null ? `$${explorer.strategy.latestResult.oos_ppg.toFixed(3)}` : explorer.strategy.latestResult.test_pnl_per_game != null ? `$${explorer.strategy.latestResult.test_pnl_per_game.toFixed(3)}` : '—'],
                       ['Training P&L/game', `$${explorer.strategy.latestResult.training_pnl_per_game?.toFixed(3) ?? '—'}`],
-                      ['Test P&L/game', `$${explorer.strategy.latestResult.test_pnl_per_game?.toFixed(3) ?? '—'}`],
                       ['Live P&L/game', explorer.strategy.livePlays > 0 ? `$${explorer.strategy.livePnlPerGame.toFixed(3)}` : '—'],
+                      ['Trust Factor', explorer.strategy.latestResult.live_trust_factor != null ? `${(explorer.strategy.latestResult.live_trust_factor * 100).toFixed(0)}%` : '—'],
+                      ['Overfit Gap', explorer.strategy.latestResult.overfit_gap?.toFixed(4) ?? '—'],
+                      ['Diversity Bonus', explorer.strategy.latestResult.diversity_bonus?.toFixed(3) ?? '—'],
                       ['Win Rate', `${((explorer.strategy.latestResult.win_rate ?? 0) * 100).toFixed(1)}%`],
                       ['Avg Matches', explorer.strategy.latestResult.avg_matches?.toFixed(2)],
                       ['Best Win', `$${explorer.strategy.latestResult.best_single_win ?? 0}`],
                       ['Max Losing Streak', explorer.strategy.latestResult.max_losing_streak],
-                      ['Training Games', explorer.strategy.latestResult.games_in_training],
-                      ['Test Games', explorer.strategy.latestResult.games_in_test],
+                      ['Total Games', explorer.strategy.latestResult.games_in_training],
                       ['Live Plays', explorer.strategy.livePlays],
-                      ['Real World Plays', explorer.strategy.real_world_plays],
                     ].map(([label, value]) => (
                       <div key={String(label)} className="bg-[#0e0e10] rounded p-2">
                         <div className="text-slate-600">{label}</div>

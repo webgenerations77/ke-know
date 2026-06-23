@@ -99,19 +99,39 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 5. Commit predictions for the game right after the true current max
+    // 5. Commit predictions for the next 3 games to buffer against missed
+    //    poll cycles. Each draw is ~4 min apart, so 3 games covers ~12 min.
+    //    ignoreDuplicates ensures earlier predictions aren't overwritten.
+    const LOOKAHEAD = 3;
+
     const { data: maxAfterRow } = await db
       .from('games')
       .select('game_num')
       .order('game_num', { ascending: false })
       .limit(1)
       .maybeSingle();
-    const nextGameNum = (maxAfterRow?.game_num ?? maxInDb) + 1;
+    const baseNextGame = (maxAfterRow?.game_num ?? maxInDb) + 1;
 
     const { data: promoted } = await db
       .from('strategies')
       .select('id,spot_count,genome')
       .eq('status', 'promoted');
+
+    // Load today's daily pick to check if we should use its exact numbers
+    const today = new Date().toLocaleDateString('en-CA');
+    const { data: dailyPick } = await db
+      .from('daily_picks')
+      .select('strategy_id,picks,bonus_type,best_hour,recommended_games,games_played,status,spot_count')
+      .eq('pick_date', today)
+      .maybeSingle();
+
+    const nowET = (new Date().getUTCHours() - 4 + 24) % 24;
+    const inDailyWindow = dailyPick
+      && dailyPick.best_hour != null
+      && nowET >= (dailyPick.best_hour as number)
+      && nowET < (dailyPick.best_hour as number) + 1
+      && ((dailyPick.games_played as number) ?? 0) < (dailyPick.recommended_games as number)
+      && dailyPick.status !== 'complete';
 
     if (promoted && promoted.length > 0) {
       const { data: recentGames } = await db
@@ -122,22 +142,56 @@ export async function POST(req: NextRequest) {
 
       const games = (recentGames ?? []) as Game[];
 
-      const newPredictions = promoted.map(s => ({
-        strategy_id: s.id,
-        spot_count: s.spot_count,
-        predicted_for_game_num: nextGameNum,
-        picks: generatePicks(s.genome as StrategyGenome, s.spot_count, games),
-        bonus_type: (s.genome as StrategyGenome).bonus_type ?? 'none',
-      }));
+      // Generate picks once per strategy, then commit for the next 3 games
+      const picksPerStrategy = new Map<number, { picks: number[]; bonusType: string; spotCount: number }>();
+      for (const s of promoted) {
+        if (inDailyWindow && dailyPick && s.id === dailyPick.strategy_id) {
+          picksPerStrategy.set(s.id as number, {
+            picks: dailyPick.picks as number[],
+            bonusType: dailyPick.bonus_type as string,
+            spotCount: dailyPick.spot_count as number,
+          });
+        } else {
+          picksPerStrategy.set(s.id as number, {
+            picks: generatePicks(s.genome as StrategyGenome, s.spot_count as number, games),
+            bonusType: (s.genome as StrategyGenome).bonus_type ?? 'none',
+            spotCount: s.spot_count as number,
+          });
+        }
+      }
 
-      await db.from('pending_predictions').upsert(newPredictions, {
+      const allPredictions: { strategy_id: number; spot_count: number; predicted_for_game_num: number; picks: number[]; bonus_type: string }[] = [];
+      for (let offset = 0; offset < LOOKAHEAD; offset++) {
+        const gameNum = baseNextGame + offset;
+        for (const s of promoted) {
+          const p = picksPerStrategy.get(s.id as number)!;
+          allPredictions.push({
+            strategy_id: s.id as number,
+            spot_count: p.spotCount,
+            predicted_for_game_num: gameNum,
+            picks: p.picks,
+            bonus_type: p.bonusType,
+          });
+        }
+      }
+
+      await db.from('pending_predictions').upsert(allPredictions, {
         onConflict: 'strategy_id,predicted_for_game_num',
         ignoreDuplicates: true,
       });
 
       await logEvent(db, 'prediction_committed', 'info',
-        `Committed ${newPredictions.length} predictions for game #${nextGameNum}`,
-        { game_num: nextGameNum, count: newPredictions.length });
+        `Committed predictions for games #${baseNextGame}–#${baseNextGame + LOOKAHEAD - 1} (${promoted.length} strategies × ${LOOKAHEAD} games)`,
+        { game_num_start: baseNextGame, game_num_end: baseNextGame + LOOKAHEAD - 1, count: allPredictions.length });
+
+      // Track daily pick games played
+      if (inDailyWindow && dailyPick) {
+        const newPlayed = ((dailyPick.games_played as number) ?? 0) + 1;
+        const newStatus = newPlayed >= (dailyPick.recommended_games as number) ? 'complete' : 'playing';
+        await db.from('daily_picks')
+          .update({ games_played: newPlayed, status: newStatus })
+          .eq('pick_date', today);
+      }
     }
 
     return NextResponse.json({

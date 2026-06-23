@@ -102,6 +102,10 @@ export interface StrategyResult {
   training_pnl_per_game: number | null;
   test_pnl: number | null;
   test_pnl_per_game: number | null;
+  oos_ppg: number | null;
+  overfit_gap: number | null;
+  diversity_bonus: number | null;
+  live_trust_factor: number | null;
   win_rate: number | null;
   avg_matches: number | null;
   best_single_win: number | null;
@@ -125,6 +129,7 @@ export interface LiveResult {
   is_shadow_play: boolean;
   bonus_type: string;
   bonus_multiplier: number;
+  source: 'prediction' | 'replay';
 }
 
 export interface PendingPrediction {
