@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase-server';
 import { performSync } from '@/lib/sync';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST() {
   const db = createServiceClient();

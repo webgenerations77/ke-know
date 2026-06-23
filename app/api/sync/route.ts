@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server';
 import { performSync } from '@/lib/sync';
 
 // Backfill + one evolution generation can take longer than the platform default.
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 // GET: called by Vercel cron — no auth required (Vercel signs the request)
 export async function GET() {
