@@ -114,3 +114,26 @@ Uses ntfy.sh for push notifications. Set `NTFY_TOPIC` env var and install the nt
 - `/admin/strategy-lab` — Evolution engine dashboard, genome explorer
 - `/admin/dashboard` — Analytics overview
 - `/admin/data-ingestion` — DB sync controls, evolution triggers, backfill
+
+## Arthur Roadmap — Next Steps
+
+### Near-Term (Next Few Sessions)
+
+- **Selective spot play**: Arthur currently plays all 10 spot counts every game. He should learn which spot counts are worth playing and drop underperformers — add a `spot_active` gene or fitness threshold that retires unprofitable spot counts from live play
+- **Confidence-based wager scaling**: Instead of a flat evolved wager, Arthur could scale his bet up/down based on how strongly his analysis favors a pick set — high-confidence picks get the full wager, uncertain ones get the minimum
+- **Session bankroll tracking**: Track cumulative P&L per session (commitment run) and let Arthur set stop-loss/take-profit thresholds as evolvable genes — cut a losing run short or lock in profits
+- **Time-of-day awareness**: Arthur already finds the best play window for daily picks, but his champion strategies don't factor time into number selection. Add hour-of-day context to the scoring function so picks can shift based on when draws happen
+
+### Medium-Term (Architecture Improvements)
+
+- **Multi-generation evolution per sync**: Currently sync runs one generation per day. Allow configurable N generations per sync cycle (e.g., 3-5) to accelerate learning, especially in early generations
+- **Population sizing by performance**: Increase population for spot counts that are close to profitability (more exploration needed) and reduce for those that are clearly dominated
+- **Cross-spot-count learning**: Champions from similar spot counts (e.g., 4-spot and 5-spot) could share genome traits through cross-spot crossover — a strategy that works for 5-spot might partially transfer to 6-spot
+- **Fitness function tuning**: Add an evolvable meta-gene that adjusts the fitness weight split (OOS/live/overfit/risk/diversity) per spot count — different spot counts may need different evaluation emphasis
+
+### Longer-Term (New Capabilities)
+
+- **Pattern memory**: Give Arthur a persistent memory of which number patterns preceded big wins, building a pattern library that supplements the statistical scoring
+- **Ensemble picks**: Instead of one champion per spot count, run top-3 strategies and combine their picks (majority vote, weighted by fitness) for more robust number selection
+- **Real-play tracking**: Add manual result entry so Arthur can track actual plays made at the lottery terminal and compare his shadow play performance against real outcomes
+- **Arthur personality depth**: Give Arthur memory of his own history — "last time I ran this exact set of numbers for 15 games, I hit $25 on game 12" — making his commentary more personal and data-driven rather than template-based
