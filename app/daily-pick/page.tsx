@@ -276,7 +276,7 @@ export default function DailyPickPage() {
             {[...pick.picks].sort((a, b) => a - b).map(n => (
               <div
                 key={n}
-                className="w-11 h-11 rounded-full bg-crimson/15 border border-crimson/50 flex items-center justify-center text-sm font-bold text-crimson"
+                className="w-11 h-11 rounded-full bg-crimson border border-crimson/80 flex items-center justify-center text-sm font-bold text-white"
               >
                 {n}
               </div>
@@ -324,32 +324,51 @@ export default function DailyPickPage() {
         {/* Arthur's play progress */}
         <div className="border-t border-[#1e1e24] pt-3">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-slate-500">Arthur's Shadow Play Progress</p>
+            <p className="text-xs text-slate-500">Arthur's Shadow Play</p>
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
               playStatus === 'complete' ? 'bg-green-900/30 text-green-400 border border-green-500/30' :
               playStatus === 'playing' ? 'bg-amber-900/30 text-amber-400 border border-amber-500/30' :
+              win.state === 'past' ? 'bg-[#1e1e24] text-slate-600 border border-[#333]' :
               'bg-[#1e1e24] text-slate-500 border border-[#333]'
             }`}>
-              {playStatus === 'complete' ? 'Complete' : playStatus === 'playing' ? 'Playing Now' : 'Waiting for Window'}
+              {playStatus === 'complete' ? 'Complete' :
+               playStatus === 'playing' ? 'Playing Now' :
+               win.state === 'past' ? 'Window Passed — Not Played' :
+               'Waiting for Window'}
             </span>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex-1 bg-[#1e1e24] rounded-full h-2.5 overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${
-                  playStatus === 'complete' ? 'bg-green-500' : 'bg-crimson'
-                }`}
-                style={{ width: `${playProgress}%` }}
-              />
+          {win.state === 'before' && playStatus === 'pending' ? (
+            <div className="rounded-lg bg-[#0e0e10] border border-[#1e1e24] px-4 py-3">
+              <p className="text-sm text-slate-400">
+                Arthur will start playing at <span className="text-white font-semibold">{pick.best_hour != null ? fmtHour(pick.best_hour) : '—'}</span> ET
+              </p>
+              <p className="text-[10px] text-slate-600 mt-1">
+                No games have been played yet. Arthur only plays these numbers during his suggested window.
+              </p>
             </div>
-            <span className="text-sm font-mono text-slate-300 shrink-0">
-              {gamesPlayed}/{pick.recommended_games}
-            </span>
-          </div>
-          <p className="text-[10px] text-slate-600 mt-1.5">
-            Arthur plays these exact picks during the {pick.best_hour != null ? `${fmtHour(pick.best_hour)}–${fmtHour(pick.best_hour + 1)}` : 'recommended'} window.
-            Results appear in the play history below.
-          </p>
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 bg-[#1e1e24] rounded-full h-2.5 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      playStatus === 'complete' ? 'bg-green-500' : 'bg-crimson'
+                    }`}
+                    style={{ width: `${playProgress}%` }}
+                  />
+                </div>
+                <span className="text-sm font-mono text-slate-300 shrink-0">
+                  {gamesPlayed}/{pick.recommended_games}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-600 mt-1.5">
+                {playStatus === 'complete'
+                  ? `Arthur played ${gamesPlayed} games during the ${pick.best_hour != null ? `${fmtHour(pick.best_hour)}–${fmtHour(pick.best_hour + 1)}` : ''} window.`
+                  : `Arthur plays these picks only during the ${pick.best_hour != null ? `${fmtHour(pick.best_hour)}–${fmtHour(pick.best_hour + 1)}` : 'recommended'} window.`
+                }
+              </p>
+            </>
+          )}
         </div>
       </div>
 
@@ -449,7 +468,7 @@ export default function DailyPickPage() {
                           <td className="px-3 py-2 hidden sm:table-cell">
                             <div className="flex flex-wrap gap-0.5">
                               {h.picks.slice(0, h.spot_count).sort((a, b) => a - b).map(n => (
-                                <span key={n} className="w-5 h-5 rounded-full bg-crimson/20 border border-crimson/40 text-crimson text-[9px] font-bold flex items-center justify-center">
+                                <span key={n} className="w-5 h-5 rounded-full bg-crimson/50 border border-crimson/70 text-white text-[9px] font-bold flex items-center justify-center">
                                   {n}
                                 </span>
                               ))}

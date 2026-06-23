@@ -126,6 +126,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     const nowET = (new Date().getUTCHours() - 4 + 24) % 24;
+    const dailyPickStrategyId = dailyPick?.strategy_id as number | null;
     const inDailyWindow = dailyPick
       && dailyPick.best_hour != null
       && nowET >= (dailyPick.best_hour as number)
@@ -151,32 +152,37 @@ export async function POST(req: NextRequest) {
         const genome = s.genome as StrategyGenome;
         const commitmentLen = genome.commitment_games ?? 5;
 
-        if (inDailyWindow && dailyPick && sid === dailyPick.strategy_id) {
-          picksPerStrategy.set(sid, {
-            picks: dailyPick.picks as number[],
-            bonusType: dailyPick.bonus_type as string,
-            spotCount: dailyPick.spot_count as number,
-          });
-        } else {
-          const remaining = (s.commitment_remaining as number) ?? 0;
-          const currentPicks = s.current_picks as number[] | null;
-
-          if (remaining > 0 && currentPicks && currentPicks.length > 0) {
+        // Daily pick strategy only plays during its best_hour window
+        if (dailyPickStrategyId != null && sid === dailyPickStrategyId) {
+          if (inDailyWindow && dailyPick) {
             picksPerStrategy.set(sid, {
-              picks: currentPicks,
-              bonusType: genome.bonus_type ?? 'none',
-              spotCount: s.spot_count as number,
+              picks: dailyPick.picks as number[],
+              bonusType: dailyPick.bonus_type as string,
+              spotCount: dailyPick.spot_count as number,
             });
-            commitmentUpdates.push({ id: sid, picks: currentPicks, remaining: remaining - 1 });
-          } else {
-            const newPicks = generatePicks(genome, s.spot_count as number, games);
-            picksPerStrategy.set(sid, {
-              picks: newPicks,
-              bonusType: genome.bonus_type ?? 'none',
-              spotCount: s.spot_count as number,
-            });
-            commitmentUpdates.push({ id: sid, picks: newPicks, remaining: commitmentLen - 1 });
           }
+          // Outside window: skip this strategy entirely
+          continue;
+        }
+
+        const remaining = (s.commitment_remaining as number) ?? 0;
+        const currentPicks = s.current_picks as number[] | null;
+
+        if (remaining > 0 && currentPicks && currentPicks.length > 0) {
+          picksPerStrategy.set(sid, {
+            picks: currentPicks,
+            bonusType: genome.bonus_type ?? 'none',
+            spotCount: s.spot_count as number,
+          });
+          commitmentUpdates.push({ id: sid, picks: currentPicks, remaining: remaining - 1 });
+        } else {
+          const newPicks = generatePicks(genome, s.spot_count as number, games);
+          picksPerStrategy.set(sid, {
+            picks: newPicks,
+            bonusType: genome.bonus_type ?? 'none',
+            spotCount: s.spot_count as number,
+          });
+          commitmentUpdates.push({ id: sid, picks: newPicks, remaining: commitmentLen - 1 });
         }
       }
 
@@ -192,7 +198,8 @@ export async function POST(req: NextRequest) {
       for (let offset = 0; offset < LOOKAHEAD; offset++) {
         const gameNum = baseNextGame + offset;
         for (const s of promoted) {
-          const p = picksPerStrategy.get(s.id as number)!;
+          const p = picksPerStrategy.get(s.id as number);
+          if (!p) continue;
           allPredictions.push({
             strategy_id: s.id as number,
             spot_count: p.spotCount,
