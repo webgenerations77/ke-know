@@ -1002,6 +1002,91 @@ export default function MonitorPage() {
         />
       </div>
 
+      {/* ── Biggest Win ── */}
+      <StatCard
+        label="Biggest Win"
+        value={biggestWinResult ? `$${biggestWinResult.prize}` : '—'}
+        sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · ${new Date(biggestWinResult.scored_at).toLocaleDateString()}` : 'No wins yet'}
+        onClick={() => setBiggestWinOpen(o => !o)}
+      />
+
+      {/* ── Biggest Win 14-Day History ── */}
+      {biggestWinOpen && (
+        <div className="bg-surface rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
+            <h2 className="font-semibold text-sm">Biggest Win by Day (Last 14 Days)</h2>
+            <span className="text-xs text-slate-500">{biggestWinByDay.length} days</span>
+          </div>
+          {biggestWinByDay.length === 0 ? (
+            <p className="px-4 py-6 text-slate-500 text-sm">No wins recorded yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                    <th className="px-3 py-2 text-left">Date</th>
+                    <th className="px-3 py-2 text-right">Prize</th>
+                    <th className="px-3 py-2 text-center">Spot</th>
+                    <th className="px-3 py-2 text-center hidden sm:table-cell">Matches</th>
+                    <th className="px-3 py-2 text-center">Bonus</th>
+                    <th className="px-3 py-2 text-center">Played</th>
+                    <th className="px-3 py-2 text-left hidden sm:table-cell">Numbers Played</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {biggestWinByDay.map(row => (
+                    <tr key={row.date} className={`border-b border-[#1e1e24] hover:bg-[#1e1e24] ${row.date === todayKey ? 'bg-[#16161a]' : ''}`}>
+                      <td className="px-3 py-2 font-mono text-slate-300 whitespace-nowrap">
+                        {row.date}{row.date === todayKey && <span className="ml-1 text-crimson text-[9px]">TODAY</span>}
+                      </td>
+                      <td className={`px-3 py-2 text-right font-bold ${row.prize > 0 ? 'text-green-400' : 'text-slate-500'}`}>
+                        {row.prize > 0 ? `$${row.prize}` : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-center text-slate-400">{row.prize > 0 ? `${row.spotCount}-sp` : '—'}</td>
+                      <td className="px-3 py-2 text-center text-slate-400 hidden sm:table-cell">{row.prize > 0 ? `${row.matches}/${row.spotCount}` : '—'}</td>
+                      <td className="px-3 py-2 text-center">
+                        {row.bonusType === 'super_bonus' ? (
+                          <span className="text-purple-400 font-semibold">SB{row.bonusMultiplier > 1 ? ` ×${row.bonusMultiplier}` : ''}</span>
+                        ) : row.bonusType === 'bonus' ? (
+                          <span className="text-amber-400 font-semibold">B{row.bonusMultiplier > 1 ? ` ×${row.bonusMultiplier}` : ''}</span>
+                        ) : (
+                          <span className="text-slate-600">Base</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {row.consecutiveGames > 0 ? (
+                          <span className="font-mono text-slate-300">{row.consecutiveGames}g</span>
+                        ) : '—'}
+                      </td>
+                      <td className="px-3 py-2 hidden sm:table-cell">
+                        {row.prize > 0 ? (
+                          <div className="flex flex-wrap gap-0.5">
+                            {[...row.picks].sort((a, b) => a - b).map(n => (
+                              <span
+                                key={n}
+                                className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                                  row.actualHits.includes(n)
+                                    ? 'bg-crimson text-white'
+                                    : 'bg-[#2a2a2e] text-slate-400'
+                                }`}
+                              >
+                                {n}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Evolution Generation Breakdown ── */}
       {evoDetailOpen && (
         <div className="bg-surface rounded-xl overflow-hidden">
@@ -1112,91 +1197,6 @@ export default function MonitorPage() {
                       </td>
                       <td className={`px-3 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Biggest Win ── */}
-      <StatCard
-        label="Biggest Win"
-        value={biggestWinResult ? `$${biggestWinResult.prize}` : '—'}
-        sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · ${new Date(biggestWinResult.scored_at).toLocaleDateString()}` : 'No wins yet'}
-        onClick={() => setBiggestWinOpen(o => !o)}
-      />
-
-      {/* ── Biggest Win 14-Day History ── */}
-      {biggestWinOpen && (
-        <div className="bg-surface rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
-            <h2 className="font-semibold text-sm">Biggest Win by Day (Last 14 Days)</h2>
-            <span className="text-xs text-slate-500">{biggestWinByDay.length} days</span>
-          </div>
-          {biggestWinByDay.length === 0 ? (
-            <p className="px-4 py-6 text-slate-500 text-sm">No wins recorded yet.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
-                    <th className="px-3 py-2 text-left">Date</th>
-                    <th className="px-3 py-2 text-right">Prize</th>
-                    <th className="px-3 py-2 text-center">Spot</th>
-                    <th className="px-3 py-2 text-center hidden sm:table-cell">Matches</th>
-                    <th className="px-3 py-2 text-center">Bonus</th>
-                    <th className="px-3 py-2 text-center">Played</th>
-                    <th className="px-3 py-2 text-left hidden sm:table-cell">Numbers Played</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {biggestWinByDay.map(row => (
-                    <tr key={row.date} className={`border-b border-[#1e1e24] hover:bg-[#1e1e24] ${row.date === todayKey ? 'bg-[#16161a]' : ''}`}>
-                      <td className="px-3 py-2 font-mono text-slate-300 whitespace-nowrap">
-                        {row.date}{row.date === todayKey && <span className="ml-1 text-crimson text-[9px]">TODAY</span>}
-                      </td>
-                      <td className={`px-3 py-2 text-right font-bold ${row.prize > 0 ? 'text-green-400' : 'text-slate-500'}`}>
-                        {row.prize > 0 ? `$${row.prize}` : '—'}
-                      </td>
-                      <td className="px-3 py-2 text-center text-slate-400">{row.prize > 0 ? `${row.spotCount}-sp` : '—'}</td>
-                      <td className="px-3 py-2 text-center text-slate-400 hidden sm:table-cell">{row.prize > 0 ? `${row.matches}/${row.spotCount}` : '—'}</td>
-                      <td className="px-3 py-2 text-center">
-                        {row.bonusType === 'super_bonus' ? (
-                          <span className="text-purple-400 font-semibold">SB{row.bonusMultiplier > 1 ? ` ×${row.bonusMultiplier}` : ''}</span>
-                        ) : row.bonusType === 'bonus' ? (
-                          <span className="text-amber-400 font-semibold">B{row.bonusMultiplier > 1 ? ` ×${row.bonusMultiplier}` : ''}</span>
-                        ) : (
-                          <span className="text-slate-600">Base</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        {row.consecutiveGames > 0 ? (
-                          <span className="font-mono text-slate-300">{row.consecutiveGames}g</span>
-                        ) : '—'}
-                      </td>
-                      <td className="px-3 py-2 hidden sm:table-cell">
-                        {row.prize > 0 ? (
-                          <div className="flex flex-wrap gap-0.5">
-                            {[...row.picks].sort((a, b) => a - b).map(n => (
-                              <span
-                                key={n}
-                                className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
-                                  row.actualHits.includes(n)
-                                    ? 'bg-crimson text-white'
-                                    : 'bg-[#2a2a2e] text-slate-400'
-                                }`}
-                              >
-                                {n}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-slate-600">—</span>
-                        )}
                       </td>
                     </tr>
                   ))}
