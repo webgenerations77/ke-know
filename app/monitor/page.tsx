@@ -480,7 +480,7 @@ export default function MonitorPage() {
       supabase.from('evolution_state').select('*').eq('id', 1).single(),
       supabase.from('strategies').select('id,spot_count,generation').eq('status', 'promoted').order('spot_count'),
       supabase.from('strategy_results').select('generation,spot_count,fitness_score')
-        .order('generation', { ascending: true }).limit(500),
+        .order('generation', { ascending: true }).limit(10000),
       supabase.from('games').select('game_num', { count: 'exact', head: true }),
       supabase.from('games').select('draw_iso').order('game_num', { ascending: false }).limit(1).maybeSingle(),
     ]);

@@ -117,6 +117,7 @@ export default function DailyPickPage() {
       .from('live_results')
       .select('strategy_id, scored_at, picks, matches, prize, pnl, spot_count')
       .in('strategy_id', strategyIds as number[])
+      .eq('source', 'prediction')
       .order('scored_at', { ascending: false })
       .limit(10000);
 
