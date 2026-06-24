@@ -404,28 +404,33 @@ export function computeFitness(
 ): number {
   const oosPpg = cvResult.oos_ppg;
 
-  // Live PPG with trust scaling: sqrt(n/100), clamped to [0,1]
+  // Live PPG with trust scaling: sqrt(n/50), clamped to [0,1]
   let livePpgScaled = 0;
   let oosWeight = 0.35;
   let liveWeight = 0.35;
   if (livePredictionCount >= 10) {
-    const trustFactor = Math.min(1.0, Math.sqrt(livePredictionCount / 100));
+    const trustFactor = Math.min(1.0, Math.sqrt(livePredictionCount / 50));
     livePpgScaled = (livePredictionPnl / livePredictionCount) * trustFactor;
   } else {
-    // Redistribute live weight to OOS when no live data
     oosWeight = 0.70;
     liveWeight = 0;
   }
 
   // Overfit penalty: penalize training/test divergence
-  const overfitPenalty = -cvResult.overfit_gap * 2.0;
+  const overfitPenalty = -cvResult.overfit_gap * 3.0;
+
+  // Fold consistency penalty: penalize high variance across CV folds
+  const foldMean = cvResult.fold_ppgs.reduce((s, v) => s + v, 0) / cvResult.fold_ppgs.length;
+  const foldVariance = cvResult.fold_ppgs.reduce((s, v) => s + (v - foldMean) ** 2, 0) / cvResult.fold_ppgs.length;
+  const foldConsistencyPenalty = -Math.sqrt(foldVariance);
 
   // Risk-adjusted return
   const riskAdjusted = oosPpg / (1 + cvResult.max_losing_streak / 20);
 
   return (oosPpg * oosWeight)
        + (livePpgScaled * liveWeight)
-       + (overfitPenalty * 0.15)
+       + (overfitPenalty * 0.12)
+       + (foldConsistencyPenalty * 0.08)
        + (riskAdjusted * 0.10)
        + (diversityBonus * 0.05);
 }

@@ -181,9 +181,21 @@ export async function runEvolution(): Promise<{
     const survivors = ranked.slice(0, SURVIVORS).map(r => r.s);
     const survivorFitness = ranked.slice(0, SURVIVORS).map(r => r.fitness);
 
-    // Breed children via SUS parent selection
-    const childCount = SURVIVORS - IMMIGRANTS_PER_GEN;
+    // Elitism: carry the top 1 survivor through untouched
+    const ELITES = 1;
+    const childCount = SURVIVORS - IMMIGRANTS_PER_GEN - ELITES;
     const childRows: { generation: number; spot_count: number; genome: StrategyGenome; status: string; parent_ids: number[]; mutation_log: { action: string; details: string[] } }[] = [];
+
+    for (let i = 0; i < ELITES && i < survivors.length; i++) {
+      childRows.push({
+        generation: nextGen,
+        spot_count: spotCount,
+        genome: { ...survivors[i].genome },
+        status: 'active',
+        parent_ids: [survivors[i].id],
+        mutation_log: { action: 'elite', details: [`elite carry-forward of #${survivors[i].id}`] },
+      });
+    }
 
     // SUS: compute cumulative fitness for parent selection
     const minFit = Math.min(...survivorFitness);

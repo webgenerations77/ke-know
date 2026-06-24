@@ -172,12 +172,28 @@ export function mutateGenome(
 export function crossoverGenome(a: StrategyGenome, b: StrategyGenome): { genome: StrategyGenome; log: string[] } {
   const g = { ...a };
   const log: string[] = [];
+  const ALPHA = 0.3;
 
   const keys = Object.keys(a) as (keyof StrategyGenome)[];
   for (const key of keys) {
-    if (Math.random() < 0.5) {
-      (g as any)[key] = b[key];
-      log.push(`${key} <- parent B`);
+    if (key === 'weighting_method' || key === 'bonus_type') {
+      if (Math.random() < 0.5) {
+        (g as any)[key] = b[key];
+        log.push(`${key} <- parent B`);
+      }
+    } else {
+      // BLX-alpha: blend numeric genes with exploration beyond parents
+      const va = a[key] as number;
+      const vb = b[key] as number;
+      const lo = Math.min(va, vb);
+      const hi = Math.max(va, vb);
+      const span = hi - lo;
+      const range = GENOME_RANGES[key] as [number, number];
+      let blended = lo - ALPHA * span + Math.random() * (1 + 2 * ALPHA) * span;
+      blended = Math.max(range[0], Math.min(range[1], blended));
+      if (INTEGER_KEYS.has(key)) blended = Math.round(blended);
+      (g as any)[key] = blended;
+      log.push(`${key}: blend(${va}, ${vb}) -> ${blended}`);
     }
   }
 
