@@ -38,21 +38,6 @@ function Dot({ ok }: { ok: boolean }) {
   );
 }
 
-// ── Skeleton helpers ──────────────────────────────────────────────────────────
-function SkeletonLine({ w = 'w-full', h = 'h-3' }: { w?: string; h?: string }) {
-  return <div className={`${w} ${h} bg-[#2a2a2e] rounded animate-pulse`} />;
-}
-
-function SkeletonCard() {
-  return (
-    <div className="bg-surface rounded-xl p-4 space-y-2">
-      <SkeletonLine w="w-1/3" h="h-2" />
-      <SkeletonLine w="w-1/2" h="h-5" />
-      <SkeletonLine w="w-2/3" h="h-2" />
-    </div>
-  );
-}
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface ArthurContext {
   evoState: EvolutionState | null;
@@ -488,7 +473,8 @@ export default function MonitorPage() {
   const [expandedPick, setExpandedPick] = useState<string | null>(null);
   const [eventsPage, setEventsPage] = useState(1);
   const [mounted, setMounted] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loadingPhase, setLoadingPhase] = useState<'loading' | 'exiting' | 'done'>('loading');
+  const [loadingMsgIdx, setLoadingMsgIdx] = useState(0);
   const [evoDetailOpen, setEvoDetailOpen] = useState(false);
   const [biggestWinOpen, setBiggestWinOpen] = useState(false);
   const [stratGenMap, setStratGenMap] = useState<Map<number, number>>(new Map());
@@ -672,8 +658,18 @@ export default function MonitorPage() {
       }));
     }
 
-    setLoading(false);
+    setLoadingPhase('exiting');
+    setTimeout(() => setLoadingPhase('done'), 600);
   }, []);
+
+  const LOADING_MESSAGES = [
+    'Scanning recent draws…',
+    'Loading evolution state…',
+    'Checking today\'s numbers…',
+    'Reviewing champion strategies…',
+    'Crunching the numbers…',
+    'Almost ready…',
+  ];
 
   useEffect(() => {
     setMounted(true);
@@ -682,6 +678,12 @@ export default function MonitorPage() {
     setEvoPulseOpen(lsGet('monitor_evoPulse', false));
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    if (loadingPhase !== 'loading') return;
+    const t = setInterval(() => setLoadingMsgIdx(i => i + 1), 1800);
+    return () => clearInterval(t);
+  }, [loadingPhase]);
 
   useEffect(() => {
     const ch1 = supabase
@@ -896,45 +898,6 @@ export default function MonitorPage() {
 
   if (!mounted) return null;
 
-  // ── Loading skeleton ───────────────────────────────────────────────────────
-  if (loading) {
-    return (
-      <div className="space-y-4 sm:space-y-6">
-        <h1 className="text-xl sm:text-2xl font-bold">Live Monitor</h1>
-        {/* Arthur skeleton */}
-        <div className="bg-surface rounded-xl p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-[#2a2a2e] animate-pulse flex-shrink-0" />
-            <SkeletonLine w="w-24" h="h-2" />
-          </div>
-          <SkeletonLine w="w-full" h="h-3" />
-          <SkeletonLine w="w-4/5" h="h-3" />
-        </div>
-        {/* Stat cards skeleton */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
-        {/* Performance skeleton */}
-        <SkeletonCard />
-        {/* Champion grid skeleton */}
-        <div className="bg-surface rounded-xl p-4 space-y-3">
-          <SkeletonLine w="w-32" h="h-3" />
-          <div className="grid grid-cols-5 gap-2">
-            {Array.from({ length: 10 }).map((_, i) => (
-              <div key={i} className="bg-[#0e0e10] rounded-lg p-2 space-y-1.5">
-                <SkeletonLine w="w-full" h="h-2" />
-                <SkeletonLine w="w-3/4" h="h-3" />
-                <SkeletonLine w="w-1/2" h="h-2" />
-              </div>
-            ))}
-          </div>
-        </div>
-        <p className="text-xs text-slate-600 text-center animate-pulse">Waking Arthur up…</p>
-      </div>
-    );
-  }
-
   const arthur = computeArthurFull({
     evoState, displayGen, champions, bToday, bAll, b24, events, allLiveResults, dailyMap,
   });
@@ -973,6 +936,58 @@ export default function MonitorPage() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+
+      {/* ── Arthur Awakening Loader ── */}
+      {loadingPhase !== 'done' && (
+        <div
+          className={`fixed inset-0 z-[100] bg-bg flex flex-col items-center justify-center pointer-events-none transition-opacity duration-500 ${loadingPhase === 'exiting' ? 'opacity-0' : 'opacity-100'}`}
+        >
+          {/* Radial glow */}
+          <div className="absolute inset-0 pointer-events-none" style={{
+            background: 'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(139,26,74,0.10) 0%, transparent 70%)',
+          }} />
+
+          {/* Pulse rings */}
+          <div className="relative flex items-center justify-center mb-8">
+            <span className="absolute w-40 h-40 rounded-full border border-crimson/10 animate-ping" style={{ animationDuration: '2.4s' }} />
+            <span className="absolute w-28 h-28 rounded-full border border-crimson/15 animate-ping" style={{ animationDuration: '2.4s', animationDelay: '0.6s' }} />
+            <span className="absolute w-20 h-20 rounded-full bg-crimson/5 animate-ping" style={{ animationDuration: '2.4s', animationDelay: '1.2s' }} />
+
+            {/* Arthur face — awakening (sleeping) */}
+            <div className="relative z-10 flex items-center justify-center w-20 h-20 rounded-full bg-crimson/8 border border-crimson/20">
+              <svg width="80" height="80" viewBox="0 0 32 32">
+                {/* Closed eyes */}
+                <line x1="9" y1="13" x2="13" y2="13" stroke="#8B1A4A" strokeWidth="1.8" strokeLinecap="round"/>
+                <line x1="19" y1="13" x2="23" y2="13" stroke="#8B1A4A" strokeWidth="1.8" strokeLinecap="round"/>
+                {/* Gentle smile */}
+                <path d="M12,20 Q16,22 20,20" stroke="#8B1A4A" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+                {/* z z */}
+                <text x="20.5" y="10" fontSize="5.5" fill="#8B1A4A" fontWeight="700" opacity="0.85">z</text>
+                <text x="24" y="7.5" fontSize="3.8" fill="#8B1A4A" fontWeight="700" opacity="0.5">z</text>
+              </svg>
+            </div>
+          </div>
+
+          {/* Label + cycling message */}
+          <div className="flex flex-col items-center gap-2 relative z-10">
+            <span className="text-[10px] font-semibold text-crimson/60 uppercase tracking-widest">Arthur</span>
+            <p className="text-sm text-slate-400 tracking-wide transition-opacity duration-300">
+              {LOADING_MESSAGES[loadingMsgIdx % LOADING_MESSAGES.length]}
+            </p>
+            {/* Animated dots */}
+            <div className="flex gap-1.5 mt-1">
+              {[0, 1, 2].map(i => (
+                <span
+                  key={i}
+                  className="w-1 h-1 rounded-full bg-crimson/40 animate-bounce"
+                  style={{ animationDelay: `${i * 0.15}s` }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <h1 className="text-xl sm:text-2xl font-bold">Live Monitor</h1>
 
       {/* ── Arthur's Current Thought ── */}
