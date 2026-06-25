@@ -1117,16 +1117,17 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* ── Evolution Card (Database stats moved to System Health) ── */}
-      <StatCard
-        label="Evolution"
-        value={displayGen > 0 ? `Gen ${displayGen}` : 'Not started'}
-        sub={replayTotals.total > 0
-          ? `Backtested: ${replayTotals.wins}W–${replayTotals.losses}L · ${replayTotals.pnl >= 0 ? '+' : ''}$${replayTotals.pnl.toFixed(2)}`
-          : evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
-        ok={!lastEvo || lastEvo.severity !== 'error'}
-        onClick={() => setEvoDetailOpen(o => !o)}
-      />
+      {/* ── Evolution + Biggest Win (side by side) ── */}
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard
+          label="Evolution"
+          value={displayGen > 0 ? `Gen ${displayGen}` : 'Not started'}
+          sub={replayTotals.total > 0
+            ? `Backtested: ${replayTotals.wins}W–${replayTotals.losses}L · ${replayTotals.pnl >= 0 ? '+' : ''}$${replayTotals.pnl.toFixed(2)}`
+            : evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
+          ok={!lastEvo || lastEvo.severity !== 'error'}
+          onClick={() => setEvoDetailOpen(o => !o)}
+        />
 
       {/* ── Evolution Generation Breakdown ── */}
       {evoDetailOpen && (
@@ -1246,13 +1247,13 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* ── Biggest Win ── */}
-      <StatCard
-        label="Biggest Win"
-        value={biggestWinResult ? `$${biggestWinResult.prize}` : '—'}
-        sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · ${new Date(biggestWinResult.scored_at).toLocaleDateString()}` : 'No wins yet'}
-        onClick={() => setBiggestWinOpen(o => !o)}
-      />
+        <StatCard
+          label="Biggest Win"
+          value={biggestWinResult ? `$${biggestWinResult.prize}` : '—'}
+          sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · ${new Date(biggestWinResult.scored_at).toLocaleDateString()}` : 'No wins yet'}
+          onClick={() => setBiggestWinOpen(o => !o)}
+        />
+      </div>
 
       {/* ── Biggest Win 14-Day History ── */}
       {biggestWinOpen && (
