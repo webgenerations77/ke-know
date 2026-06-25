@@ -38,9 +38,26 @@ function Dot({ ok }: { ok: boolean }) {
   );
 }
 
+// ── Skeleton helpers ──────────────────────────────────────────────────────────
+function SkeletonLine({ w = 'w-full', h = 'h-3' }: { w?: string; h?: string }) {
+  return <div className={`${w} ${h} bg-[#2a2a2e] rounded animate-pulse`} />;
+}
+
+function SkeletonCard() {
+  return (
+    <div className="bg-surface rounded-xl p-4 space-y-2">
+      <SkeletonLine w="w-1/3" h="h-2" />
+      <SkeletonLine w="w-1/2" h="h-5" />
+      <SkeletonLine w="w-2/3" h="h-2" />
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 interface ArthurContext {
   evoState: EvolutionState | null;
-  champions: { spot_count: number; fitness_score: number | null; id: number; generation: number }[];
+  displayGen: number;
+  champions: ChampionRow[];
   bToday: PerformanceBucket;
   bAll: PerformanceBucket;
   b24: PerformanceBucket;
@@ -60,9 +77,9 @@ function pick<T>(arr: T[]): T {
 }
 
 function computeArthurFull(ctx: ArthurContext): ArthurOutput {
-  const { evoState, champions, bToday, bAll, b24, events, allLiveResults, dailyMap } = ctx;
+  const { evoState, displayGen: gen, champions, bToday, bAll, b24, events, allLiveResults, dailyMap } = ctx;
 
-  if (!evoState || evoState.current_generation === 0) {
+  if (!evoState || gen === 0) {
     return {
       main: pick([
         "I'm brand new here — haven't had my first look at the data yet. Hit that evolution button and let me start learning.",
@@ -74,7 +91,6 @@ function computeArthurFull(ctx: ArthurContext): ArthurOutput {
     };
   }
 
-  const gen = evoState.current_generation;
   const champCount = champions.length;
   const now = Date.now();
 
@@ -157,7 +173,7 @@ function computeArthurFull(ctx: ArthurContext): ArthurOutput {
 
   const activeSpots = new Set(champions.map(c => c.spot_count));
 
-  // ── Build observations (secondary insights) ──
+  // ── Build observations ──
   const observations: { text: string; weight: number }[] = [];
 
   if (streakType === 'win' && streakCount >= 3) {
@@ -439,6 +455,24 @@ function PerfCol({
   );
 }
 
+interface ChampionRow {
+  id: number;
+  spot_count: number;
+  generation: number;
+  fitness_score: number | null;
+  current_picks: number[] | null;
+}
+
+// localStorage helpers with SSR safety
+function lsGet(key: string, fallback: boolean): boolean {
+  if (typeof window === 'undefined') return fallback;
+  const v = localStorage.getItem(key);
+  return v === null ? fallback : v === 'true';
+}
+function lsSet(key: string, val: boolean) {
+  if (typeof window !== 'undefined') localStorage.setItem(key, String(val));
+}
+
 export default function MonitorPage() {
   const [events, setEvents] = useState<SystemEvent[]>([]);
   const [liveResults, setLiveResults] = useState<LiveResult[]>([]);
@@ -447,13 +481,14 @@ export default function MonitorPage() {
   const [recentGames, setRecentGames] = useState<Game[]>([]);
   const [evoState, setEvoState] = useState<EvolutionState | null>(null);
   const [fitnessByGen, setFitnessByGen] = useState<{ generation: number; [key: string]: number }[]>([]);
-  const [champions, setChampions] = useState<{ spot_count: number; fitness_score: number | null; id: number; generation: number }[]>([]);
+  const [champions, setChampions] = useState<ChampionRow[]>([]);
   const [totalGames, setTotalGames] = useState(0);
   const [latestGameTs, setLatestGameTs] = useState<string | null>(null);
   const [expandedEvent, setExpandedEvent] = useState<number | null>(null);
   const [expandedPick, setExpandedPick] = useState<string | null>(null);
   const [eventsPage, setEventsPage] = useState(1);
   const [mounted, setMounted] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [evoDetailOpen, setEvoDetailOpen] = useState(false);
   const [biggestWinOpen, setBiggestWinOpen] = useState(false);
   const [stratGenMap, setStratGenMap] = useState<Map<number, number>>(new Map());
@@ -462,6 +497,18 @@ export default function MonitorPage() {
   const [rollingPerfOpen, setRollingPerfOpen] = useState(false);
   const [cronHealthOpen, setCronHealthOpen] = useState(false);
   const [replayResults, setReplayResults] = useState<LiveResult[]>([]);
+  // Collapsible sections — default collapsed, persisted in localStorage
+  const [liveFeedOpen, setLiveFeedOpen] = useState(false);
+  const [evoPulseOpen, setEvoPulseOpen] = useState(false);
+  // Issue 2: displayed generation (max of stored state and actual champion generations)
+  const [displayGen, setDisplayGen] = useState(0);
+
+  const toggleLiveFeed = () => {
+    setLiveFeedOpen(v => { lsSet('monitor_liveFeed', !v); return !v; });
+  };
+  const toggleEvoPulse = () => {
+    setEvoPulseOpen(v => { lsSet('monitor_evoPulse', !v); return !v; });
+  };
 
   const loadAll = useCallback(async () => {
     const [
@@ -470,19 +517,20 @@ export default function MonitorPage() {
       { data: games },
       { data: evo },
       { data: champs },
-      { data: genFitness },
       { count },
       { data: latestGame },
+      // Load all strategies for the id→generation map (needed for fitness chart)
+      { data: allStrategies },
     ] = await Promise.all([
       supabase.from('system_events').select('*').order('occurred_at', { ascending: false }).limit(100),
       supabase.from('live_results').select('*').eq('source', 'prediction').order('scored_at', { ascending: false }).limit(200),
       supabase.from('games').select('*').order('game_num', { ascending: false }).limit(20),
       supabase.from('evolution_state').select('*').eq('id', 1).single(),
-      supabase.from('strategies').select('id,spot_count,generation').eq('status', 'promoted').order('spot_count'),
-      supabase.from('strategy_results').select('generation,spot_count,fitness_score')
-        .order('generation', { ascending: true }).limit(10000),
+      supabase.from('strategies').select('id,spot_count,generation,current_picks').eq('status', 'promoted').order('spot_count'),
       supabase.from('games').select('game_num', { count: 'exact', head: true }),
       supabase.from('games').select('draw_iso').order('game_num', { ascending: false }).limit(1).maybeSingle(),
+      // All non-retired strategies for the generation map
+      supabase.from('strategies').select('id,generation').neq('status', 'retired'),
     ]);
 
     const allResults: LiveResult[] = [];
@@ -501,7 +549,7 @@ export default function MonitorPage() {
       offset += PAGE;
     }
 
-    // Load replay results for evolution stats (separate from live predictions)
+    // Load replay results for evolution stats
     const allReplays: LiveResult[] = [];
     let rOffset = 0;
     while (true) {
@@ -526,27 +574,44 @@ export default function MonitorPage() {
     if (count !== null) setTotalGames(count);
     if (latestGame) setLatestGameTs(latestGame.draw_iso);
 
-    // Load strategy→generation mapping for all strategies that have live results
+    // Build a complete strategy id→generation map from the strategies table
+    // (more reliable than strategy_results.generation which may be stale or inconsistent)
+    const fullGenMap = new Map<number, number>();
+    for (const s of allStrategies ?? []) {
+      fullGenMap.set(s.id as number, s.generation as number);
+    }
+
+    // Build strategy→generation mapping for live+replay results display
     const allResultsForMapping = [...allResults, ...allReplays];
     const stratIds = [...new Set(allResultsForMapping.map(r => r.strategy_id))];
     if (stratIds.length > 0) {
       const genMap = new Map<number, number>();
-      for (let i = 0; i < stratIds.length; i += 100) {
-        const batch = stratIds.slice(i, i + 100);
-        const { data: strats } = await supabase
-          .from('strategies')
-          .select('id,generation')
-          .in('id', batch);
-        for (const s of strats ?? []) {
-          genMap.set(s.id as number, s.generation as number);
+      // Use fullGenMap first, then fall back to a batch query for any missing
+      for (const id of stratIds) {
+        if (fullGenMap.has(id)) {
+          genMap.set(id, fullGenMap.get(id)!);
+        }
+      }
+      const missing = stratIds.filter(id => !genMap.has(id));
+      if (missing.length > 0) {
+        for (let i = 0; i < missing.length; i += 100) {
+          const batch = missing.slice(i, i + 100);
+          const { data: strats } = await supabase
+            .from('strategies')
+            .select('id,generation')
+            .in('id', batch);
+          for (const s of strats ?? []) {
+            genMap.set(s.id as number, s.generation as number);
+          }
         }
       }
       setStratGenMap(genMap);
     }
 
+    // Load fitness per champion
     if (champs) {
-      const champData = await Promise.all(
-        (champs as { id: number; spot_count: number; generation: number }[]).map(async c => {
+      const champData: ChampionRow[] = await Promise.all(
+        (champs as { id: number; spot_count: number; generation: number; current_picks: number[] | null }[]).map(async c => {
           const { data: r } = await supabase
             .from('strategy_results')
             .select('fitness_score')
@@ -554,22 +619,51 @@ export default function MonitorPage() {
             .order('evaluated_at', { ascending: false })
             .limit(1)
             .maybeSingle();
-          return { ...c, fitness_score: r?.fitness_score ?? null };
+          return {
+            id: c.id,
+            spot_count: c.spot_count,
+            generation: c.generation,
+            fitness_score: r?.fitness_score ?? null,
+            current_picks: c.current_picks ?? null,
+          };
         })
       );
       setChampions(champData);
+
+      // Issue 2: derive display generation from max of stored state and champion generations
+      const storedGen: number = (evo as EvolutionState | null)?.current_generation ?? 0;
+      const maxChampGen = champData.reduce((m, c) => Math.max(m, c.generation), 0);
+      const derivedGen = Math.max(storedGen, maxChampGen);
+      if (derivedGen > storedGen) {
+        console.warn(`[Monitor] Generation mismatch: evolution_state=${storedGen}, max champion gen=${maxChampGen}. Using ${derivedGen}.`);
+      }
+      setDisplayGen(derivedGen);
+    } else {
+      setDisplayGen((evo as EvolutionState | null)?.current_generation ?? 0);
     }
 
-    if (genFitness) {
+    // Build fitness-by-generation chart using strategy birth generation from strategies table
+    // Group strategy_results by the strategy's actual birth generation (not the evaluation round)
+    const { data: strategyResultsData } = await supabase
+      .from('strategy_results')
+      .select('strategy_id,spot_count,fitness_score')
+      .order('evaluated_at', { ascending: false })
+      .limit(10000);
+
+    if (strategyResultsData) {
       const byGen = new Map<number, Map<number, number>>();
-      for (const row of genFitness as { generation: number; spot_count: number; fitness_score: number | null }[]) {
-        if (!byGen.has(row.generation)) byGen.set(row.generation, new Map());
-        const genMap = byGen.get(row.generation)!;
+      for (const row of strategyResultsData as { strategy_id: number; spot_count: number; fitness_score: number | null }[]) {
+        // Look up this strategy's birth generation from the strategies table
+        const stratGen = fullGenMap.get(row.strategy_id);
+        if (stratGen == null || stratGen === 0) continue;
+        if (!byGen.has(stratGen)) byGen.set(stratGen, new Map());
+        const genMap = byGen.get(stratGen)!;
         const current = genMap.get(row.spot_count) ?? -999;
         if ((row.fitness_score ?? -999) > current) {
           genMap.set(row.spot_count, row.fitness_score ?? 0);
         }
       }
+      // Last 48 birth-generations with recorded fitness data
       const last48 = [...byGen.entries()].sort((a, b) => a[0] - b[0]).slice(-48);
       setFitnessByGen(last48.map(([gen, spotMap]) => {
         const entry: { generation: number; [key: string]: number } = { generation: gen };
@@ -577,10 +671,15 @@ export default function MonitorPage() {
         return entry;
       }));
     }
+
+    setLoading(false);
   }, []);
 
   useEffect(() => {
     setMounted(true);
+    // Restore collapsible prefs from localStorage
+    setLiveFeedOpen(lsGet('monitor_liveFeed', false));
+    setEvoPulseOpen(lsGet('monitor_evoPulse', false));
     loadAll();
   }, [loadAll]);
 
@@ -720,7 +819,6 @@ export default function MonitorPage() {
   }
   const sortedDays = [...last14Days.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 14);
   for (const [date, r] of sortedDays) {
-    // Count consecutive games these same picks were played by this strategy
     const pickKey = JSON.stringify([...r.picks].sort((a, b) => a - b));
     const samePickResults = allLiveResults
       .filter(lr => lr.strategy_id === r.strategy_id && lr.spot_count === r.spot_count)
@@ -729,7 +827,6 @@ export default function MonitorPage() {
     const winIdx = samePickResults.findIndex(lr => lr.game_num === r.game_num);
     if (winIdx >= 0) {
       consecutive = 1;
-      // Count backwards from the winning game
       for (let i = winIdx - 1; i >= 0; i--) {
         const prev = samePickResults[i];
         if (JSON.stringify([...prev.picks].sort((a, b) => a - b)) === pickKey
@@ -737,7 +834,6 @@ export default function MonitorPage() {
           consecutive++;
         } else break;
       }
-      // Count forwards
       for (let i = winIdx + 1; i < samePickResults.length; i++) {
         const next = samePickResults[i];
         if (JSON.stringify([...next.picks].sort((a, b) => a - b)) === pickKey
@@ -788,7 +884,6 @@ export default function MonitorPage() {
     replayBreakdown.set(gen, entry);
   }
 
-  // Totals for the Evolution preview card
   const replayTotals = { wins: 0, losses: 0, pnl: 0, total: 0 };
   for (const [, b] of replayBreakdown) {
     replayTotals.wins += b.wins;
@@ -801,8 +896,47 @@ export default function MonitorPage() {
 
   if (!mounted) return null;
 
+  // ── Loading skeleton ───────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="space-y-4 sm:space-y-6">
+        <h1 className="text-xl sm:text-2xl font-bold">Live Monitor</h1>
+        {/* Arthur skeleton */}
+        <div className="bg-surface rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-[#2a2a2e] animate-pulse flex-shrink-0" />
+            <SkeletonLine w="w-24" h="h-2" />
+          </div>
+          <SkeletonLine w="w-full" h="h-3" />
+          <SkeletonLine w="w-4/5" h="h-3" />
+        </div>
+        {/* Stat cards skeleton */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+        {/* Performance skeleton */}
+        <SkeletonCard />
+        {/* Champion grid skeleton */}
+        <div className="bg-surface rounded-xl p-4 space-y-3">
+          <SkeletonLine w="w-32" h="h-3" />
+          <div className="grid grid-cols-5 gap-2">
+            {Array.from({ length: 10 }).map((_, i) => (
+              <div key={i} className="bg-[#0e0e10] rounded-lg p-2 space-y-1.5">
+                <SkeletonLine w="w-full" h="h-2" />
+                <SkeletonLine w="w-3/4" h="h-3" />
+                <SkeletonLine w="w-1/2" h="h-2" />
+              </div>
+            ))}
+          </div>
+        </div>
+        <p className="text-xs text-slate-600 text-center animate-pulse">Waking Arthur up…</p>
+      </div>
+    );
+  }
+
   const arthur = computeArthurFull({
-    evoState, champions, bToday, bAll, b24, events, allLiveResults, dailyMap,
+    evoState, displayGen, champions, bToday, bAll, b24, events, allLiveResults, dailyMap,
   });
 
   const moodGradient = {
@@ -857,8 +991,8 @@ export default function MonitorPage() {
                 <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${moodDotColor}`} />
               </span>
               <span className="text-[10px] text-slate-600">{moodLabel}</span>
-              {evoState?.current_generation ? (
-                <span className="text-[10px] text-slate-700">· Gen {evoState.current_generation}</span>
+              {displayGen > 0 ? (
+                <span className="text-[10px] text-slate-700">· Gen {displayGen}</span>
               ) : null}
             </div>
             <p className="text-sm text-slate-300 leading-relaxed">{arthur.main}</p>
@@ -983,24 +1117,134 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* ── Database + Evolution ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <StatCard
-          label="Database"
-          value={`${totalGames.toLocaleString()} games`}
-          sub={latestGameTs ? `Latest: ${fmtDate(latestGameTs)}` : undefined}
-          ok={minutesAgo(latestGameTs) < 10}
-        />
-        <StatCard
-          label="Evolution"
-          value={evoState?.current_generation ? `Gen ${evoState.current_generation}` : 'Not started'}
-          sub={replayTotals.total > 0
-            ? `Backtested: ${replayTotals.wins}W–${replayTotals.losses}L · ${replayTotals.pnl >= 0 ? '+' : ''}$${replayTotals.pnl.toFixed(2)}`
-            : evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
-          ok={!lastEvo || lastEvo.severity !== 'error'}
-          onClick={() => setEvoDetailOpen(o => !o)}
-        />
-      </div>
+      {/* ── Evolution Card (Database stats moved to System Health) ── */}
+      <StatCard
+        label="Evolution"
+        value={displayGen > 0 ? `Gen ${displayGen}` : 'Not started'}
+        sub={replayTotals.total > 0
+          ? `Backtested: ${replayTotals.wins}W–${replayTotals.losses}L · ${replayTotals.pnl >= 0 ? '+' : ''}$${replayTotals.pnl.toFixed(2)}`
+          : evoState?.last_run_at ? `Last: ${fmtDate(evoState.last_run_at)}` : undefined}
+        ok={!lastEvo || lastEvo.severity !== 'error'}
+        onClick={() => setEvoDetailOpen(o => !o)}
+      />
+
+      {/* ── Evolution Generation Breakdown ── */}
+      {evoDetailOpen && (
+        <div className="bg-surface rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#2a2a2e]">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm">Performance by Generation</h2>
+              <span className="text-xs text-slate-500">{genRows.length} gens</span>
+            </div>
+            {evoState?.last_run_at && (
+              <p className="text-[10px] text-slate-600 mt-1">Last evolved: {fmtDate(evoState.last_run_at)}</p>
+            )}
+          </div>
+
+          {replayTotals.total > 0 && (
+            <div className="px-4 py-3 border-b border-[#2a2a2e] bg-[#0e0e10]">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Historical Backtest</span>
+                <span className="text-[10px] text-slate-700">(replay — not counted in live stats)</span>
+              </div>
+              <div className="overflow-x-auto max-h-48">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-600 border-b border-[#1e1e24]">
+                      <th className="px-3 py-1.5 text-left">Gen</th>
+                      <th className="px-3 py-1.5 text-left">W–L</th>
+                      <th className="px-3 py-1.5 text-right">Games</th>
+                      <th className="px-3 py-1.5 text-right">P&L</th>
+                      <th className="px-3 py-1.5 text-right">P&L/g</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...replayBreakdown.entries()]
+                      .filter(([gen]) => gen > 0)
+                      .sort((a, b) => b[0] - a[0])
+                      .map(([gen, b]) => (
+                        <tr key={gen} className="border-b border-[#1a1a1e]">
+                          <td className="px-3 py-1.5 font-mono text-slate-500">
+                            {gen}{gen === displayGen && <span className="ml-1 text-crimson text-[9px]">NOW</span>}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <span className="text-green-500/70">{b.wins}W</span>
+                            <span className="text-slate-600 mx-0.5">–</span>
+                            <span className="text-red-400/70">{b.losses}L</span>
+                          </td>
+                          <td className="px-3 py-1.5 text-right text-slate-500">{b.total}</td>
+                          <td className={`px-3 py-1.5 text-right font-mono ${b.pnl >= 0 ? 'text-green-500/70' : 'text-red-400/70'}`}>
+                            {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(2)}
+                          </td>
+                          <td className={`px-3 py-1.5 text-right font-mono ${b.pnl >= 0 ? 'text-green-500/70' : 'text-red-400/70'}`}>
+                            ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
+                          </td>
+                        </tr>
+                      ))}
+                    <tr className="border-t border-[#2a2a2e] text-slate-400">
+                      <td className="px-3 py-1.5 font-semibold">Total</td>
+                      <td className="px-3 py-1.5">
+                        <span className="text-green-500/70">{replayTotals.wins}W</span>
+                        <span className="text-slate-600 mx-0.5">–</span>
+                        <span className="text-red-400/70">{replayTotals.losses}L</span>
+                      </td>
+                      <td className="px-3 py-1.5 text-right">{replayTotals.total}</td>
+                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${replayTotals.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {replayTotals.pnl >= 0 ? '+' : ''}${replayTotals.pnl.toFixed(2)}
+                      </td>
+                      <td className={`px-3 py-1.5 text-right font-mono ${replayTotals.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${replayTotals.total > 0 ? (replayTotals.pnl / replayTotals.total).toFixed(3) : '0.000'}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="px-4 py-2 border-b border-[#2a2a2e]">
+            <span className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Live Predictions</span>
+          </div>
+          {genRows.length === 0 ? (
+            <p className="px-4 py-6 text-slate-500 text-sm">No scored live predictions yet.</p>
+          ) : (
+            <div className="overflow-x-auto max-h-72">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface z-10">
+                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                    <th className="px-3 py-2 text-left">Gen</th>
+                    <th className="px-3 py-2 text-left">W–L</th>
+                    <th className="px-3 py-2 text-right">Win %</th>
+                    <th className="px-3 py-2 text-right">P&amp;L</th>
+                    <th className="px-3 py-2 text-right">P&amp;L/g</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {genRows.map(([gen, b]) => (
+                    <tr key={gen} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                      <td className="px-3 py-2 font-mono text-slate-300">
+                        {gen}{gen === displayGen && <span className="ml-1 text-crimson text-[9px]">NOW</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="text-green-400">{b.wins}W</span>
+                        <span className="text-slate-500 mx-0.5">–</span>
+                        <span className="text-red-400">{b.losses}L</span>
+                      </td>
+                      <td className="px-3 py-2 text-right">{b.total > 0 ? `${((b.wins / b.total) * 100).toFixed(1)}%` : '—'}</td>
+                      <td className={`px-3 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(2)}
+                      </td>
+                      <td className={`px-3 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Biggest Win ── */}
       <StatCard
@@ -1087,312 +1331,7 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* ── Evolution Generation Breakdown ── */}
-      {evoDetailOpen && (
-        <div className="bg-surface rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#2a2a2e]">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-sm">Performance by Generation</h2>
-              <span className="text-xs text-slate-500">{genRows.length} gens</span>
-            </div>
-            {evoState?.last_run_at && (
-              <p className="text-[10px] text-slate-600 mt-1">Last evolved: {fmtDate(evoState.last_run_at)}</p>
-            )}
-          </div>
-
-          {/* Backtested (replay) summary */}
-          {replayTotals.total > 0 && (
-            <div className="px-4 py-3 border-b border-[#2a2a2e] bg-[#0e0e10]">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Historical Backtest</span>
-                <span className="text-[10px] text-slate-700">(replay — not counted in live stats)</span>
-              </div>
-              <div className="overflow-x-auto max-h-48">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-slate-600 border-b border-[#1e1e24]">
-                      <th className="px-3 py-1.5 text-left">Gen</th>
-                      <th className="px-3 py-1.5 text-left">W–L</th>
-                      <th className="px-3 py-1.5 text-right">Games</th>
-                      <th className="px-3 py-1.5 text-right">P&L</th>
-                      <th className="px-3 py-1.5 text-right">P&L/g</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...replayBreakdown.entries()]
-                      .filter(([gen]) => gen > 0)
-                      .sort((a, b) => b[0] - a[0])
-                      .map(([gen, b]) => (
-                        <tr key={gen} className="border-b border-[#1a1a1e]">
-                          <td className="px-3 py-1.5 font-mono text-slate-500">
-                            {gen}{gen === evoState?.current_generation && <span className="ml-1 text-crimson text-[9px]">NOW</span>}
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <span className="text-green-500/70">{b.wins}W</span>
-                            <span className="text-slate-600 mx-0.5">–</span>
-                            <span className="text-red-400/70">{b.losses}L</span>
-                          </td>
-                          <td className="px-3 py-1.5 text-right text-slate-500">{b.total}</td>
-                          <td className={`px-3 py-1.5 text-right font-mono ${b.pnl >= 0 ? 'text-green-500/70' : 'text-red-400/70'}`}>
-                            {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(2)}
-                          </td>
-                          <td className={`px-3 py-1.5 text-right font-mono ${b.pnl >= 0 ? 'text-green-500/70' : 'text-red-400/70'}`}>
-                            ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
-                          </td>
-                        </tr>
-                      ))}
-                    <tr className="border-t border-[#2a2a2e] text-slate-400">
-                      <td className="px-3 py-1.5 font-semibold">Total</td>
-                      <td className="px-3 py-1.5">
-                        <span className="text-green-500/70">{replayTotals.wins}W</span>
-                        <span className="text-slate-600 mx-0.5">–</span>
-                        <span className="text-red-400/70">{replayTotals.losses}L</span>
-                      </td>
-                      <td className="px-3 py-1.5 text-right">{replayTotals.total}</td>
-                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${replayTotals.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {replayTotals.pnl >= 0 ? '+' : ''}${replayTotals.pnl.toFixed(2)}
-                      </td>
-                      <td className={`px-3 py-1.5 text-right font-mono ${replayTotals.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        ${replayTotals.total > 0 ? (replayTotals.pnl / replayTotals.total).toFixed(3) : '0.000'}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Live predictions by generation */}
-          <div className="px-4 py-2 border-b border-[#2a2a2e]">
-            <span className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Live Predictions</span>
-          </div>
-          {genRows.length === 0 ? (
-            <p className="px-4 py-6 text-slate-500 text-sm">No scored live predictions yet.</p>
-          ) : (
-            <div className="overflow-x-auto max-h-72">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-surface z-10">
-                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
-                    <th className="px-3 py-2 text-left">Gen</th>
-                    <th className="px-3 py-2 text-left">W–L</th>
-                    <th className="px-3 py-2 text-right">Win %</th>
-                    <th className="px-3 py-2 text-right">P&amp;L</th>
-                    <th className="px-3 py-2 text-right">P&amp;L/g</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {genRows.map(([gen, b]) => (
-                    <tr key={gen} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
-                      <td className="px-3 py-2 font-mono text-slate-300">
-                        {gen}{gen === evoState?.current_generation && <span className="ml-1 text-crimson text-[9px]">NOW</span>}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className="text-green-400">{b.wins}W</span>
-                        <span className="text-slate-500 mx-0.5">–</span>
-                        <span className="text-red-400">{b.losses}L</span>
-                      </td>
-                      <td className="px-3 py-2 text-right">{b.total > 0 ? `${((b.wins / b.total) * 100).toFixed(1)}%` : '—'}</td>
-                      <td className={`px-3 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {b.pnl >= 0 ? '+' : ''}${b.pnl.toFixed(2)}
-                      </td>
-                      <td className={`px-3 py-2 text-right font-mono ${b.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        ${b.total > 0 ? (b.pnl / b.total).toFixed(3) : '0.000'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Live Game Feed ── */}
-      <div className="bg-surface rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
-          <h2 className="font-semibold text-sm">Live Game & Prediction Feed</h2>
-          {(() => {
-            const gamesWithPredictions = new Set(liveResults.map(r => r.game_num));
-            const covered = recentGames.filter(g => gamesWithPredictions.has(g.game_num)).length;
-            const total = recentGames.length;
-            const pct = total > 0 ? Math.round(covered / total * 100) : 0;
-            return (
-              <span className="text-xs text-slate-500">
-                Arthur covered{' '}
-                <span className={pct === 100 ? 'text-green-400' : pct >= 75 ? 'text-amber-400' : 'text-red-400'}>
-                  {covered}/{total}
-                </span>{' '}
-                recent games
-              </span>
-            );
-          })()}
-        </div>
-        <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
-          {recentGames.length === 0 ? (
-            <p className="px-4 py-6 text-slate-500 text-sm">No games yet.</p>
-          ) : (
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-surface z-10">
-                <tr className="text-slate-500 border-b border-[#2a2a2e]">
-                  <th className="px-3 py-2 text-left">Game</th>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Numbers Drawn</th>
-                  <th className="px-3 py-2 text-center" colSpan={10}>Spot predictions (matches · P&L)</th>
-                </tr>
-                <tr className="text-slate-600 border-b border-[#2a2a2e]">
-                  <th colSpan={3} />
-                  {[1,2,3,4,5,6,7,8,9,10].map(s => (
-                    <th key={s} className="px-1 py-1 text-center">{s}sp</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {recentGames.slice(0, 10).map(game => {
-                  const gameResults = resultsByGame.get(game.game_num) ?? [];
-                  const bySpot = new Map(gameResults.map(r => [r.spot_count, r]));
-                  return (
-                    <tr key={game.game_num} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
-                      <td className="px-3 py-2 font-mono text-slate-400">#{game.game_num}</td>
-                      <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{game.draw_date}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex flex-wrap gap-0.5">
-                          {[...game.hits].sort((a, b) => a - b).map(n => (
-                            <span key={n}
-                              className="w-5 h-5 rounded-full bg-[#2a2a2e] text-slate-300 flex items-center justify-center text-[10px] font-bold">
-                              {n}
-                            </span>
-                          ))}
-                        </div>
-                        {(game.bonus || game.super_bonus) && (
-                          <div className="flex gap-2 mt-1">
-                            {game.bonus && (
-                              <span className="text-[9px] text-amber-400 font-semibold">B:{game.bonus}</span>
-                            )}
-                            {game.super_bonus && (
-                              <span className="text-[9px] text-purple-400 font-semibold">SB:{game.super_bonus}</span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      {[1,2,3,4,5,6,7,8,9,10].map(s => {
-                        const r = bySpot.get(s);
-                        if (!r) return <td key={s} className="px-1 py-2 text-center text-slate-700">—</td>;
-                        const color = r.pnl > 0 ? 'text-green-400' : r.pnl === 0 ? 'text-slate-400' : 'text-red-400';
-                        const bonusBadge = r.bonus_type === 'bonus'
-                          ? <span className="text-[8px] text-amber-400 font-semibold">B×{r.bonus_multiplier}</span>
-                          : r.bonus_type === 'super_bonus'
-                          ? <span className="text-[8px] text-purple-400 font-semibold">SB×{r.bonus_multiplier}</span>
-                          : null;
-                        const cellKey = `${game.game_num}-${s}`;
-                        const isExpanded = expandedPick === cellKey;
-                        return (
-                          <td
-                            key={s}
-                            className={`px-1 py-2 text-center cursor-pointer hover:bg-[#2a2a2e] transition-colors relative ${color}`}
-                            onClick={() => setExpandedPick(isExpanded ? null : cellKey)}
-                          >
-                            {r.matches}/{s}<br />
-                            <span className="text-[10px]">
-                              {r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(0)}
-                            </span>
-                            {bonusBadge && <><br />{bonusBadge}</>}
-                            {isExpanded && (
-                              <div className="absolute z-20 left-1/2 -translate-x-1/2 top-full mt-1 bg-[#16161a] border border-[#333] rounded-lg p-2 shadow-xl min-w-[120px]">
-                                <div className="text-[9px] text-slate-500 mb-1">Picks</div>
-                                <div className="flex flex-wrap gap-0.5 justify-center">
-                                  {[...r.picks].sort((a, b) => a - b).map(n => (
-                                    <span
-                                      key={n}
-                                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
-                                        r.actual_hits.includes(n)
-                                          ? 'bg-crimson text-white'
-                                          : 'bg-[#2a2a2e] text-slate-400'
-                                      }`}
-                                    >
-                                      {n}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      {/* ── Evolution Pulse ── */}
-      <div className="bg-surface rounded-xl p-4">
-        <h2 className="font-semibold text-sm mb-4">Evolution Pulse</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <div className="text-xs text-slate-500 mb-2">Current Champions</div>
-            <div className="grid grid-cols-5 gap-2">
-              {[1,2,3,4,5,6,7,8,9,10].map(s => {
-                const champ = champions.find(c => c.spot_count === s);
-                return (
-                  <div key={s} className="bg-[#0e0e10] rounded-lg p-2 text-center">
-                    <div className="text-xs text-slate-500">{s}-sp</div>
-                    {champ ? (
-                      <>
-                        <div className="text-xs font-mono text-crimson">
-                          #{champ.id}
-                        </div>
-                        <div className="text-[10px] text-slate-400">
-                          G{champ.generation}
-                        </div>
-                        <div className="text-[10px] text-green-400">
-                          {champ.fitness_score !== null ? champ.fitness_score.toFixed(3) : '—'}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="text-xs text-slate-600 mt-1">—</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div>
-            <div className="text-xs text-slate-500 mb-2">Best Fitness by Generation (last 48)</div>
-            {fitnessByGen.length > 1 ? (
-              <ResponsiveContainer width="100%" height={140}>
-                <LineChart data={fitnessByGen} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
-                  <XAxis dataKey="generation" tick={{ fontSize: 9 }} />
-                  <YAxis tick={{ fontSize: 9 }} />
-                  <Tooltip
-                    contentStyle={{ background: '#16161a', border: '1px solid #333', fontSize: 11 }}
-                    formatter={(v: number) => v.toFixed(4)}
-                  />
-                  {[1,2,3,4,5,6,7,8,9,10].map((s, i) => (
-                    <Line
-                      key={s}
-                      dataKey={`s${s}`}
-                      dot={false}
-                      strokeWidth={1.5}
-                      stroke={SPOT_COLORS[i]}
-                      name={`${s}-sp`}
-                    />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-36 flex items-center justify-center text-slate-600 text-sm">
-                Run evolution first to see fitness trends
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Rolling Performance (collapsed) ── */}
+      {/* ── Today's Performance (Issue 4: above Live Feed) ── */}
       <div className="bg-surface rounded-xl overflow-hidden">
         <button
           onClick={() => setRollingPerfOpen(o => !o)}
@@ -1416,10 +1355,230 @@ export default function MonitorPage() {
         )}
       </div>
 
-      {/* ── Cron Health (compact) ── */}
+      {/* ── Live Game Feed (Issue 7: collapsible, default collapsed) ── */}
+      <div className="bg-surface rounded-xl overflow-hidden">
+        <button
+          onClick={toggleLiveFeed}
+          className="w-full px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <h2 className="font-semibold text-sm">Live Game &amp; Prediction Feed</h2>
+            {(() => {
+              const gamesWithPredictions = new Set(liveResults.map(r => r.game_num));
+              const covered = recentGames.filter(g => gamesWithPredictions.has(g.game_num)).length;
+              const total = recentGames.length;
+              const pct = total > 0 ? Math.round(covered / total * 100) : 0;
+              return (
+                <span className="text-xs text-slate-500">
+                  Arthur covered{' '}
+                  <span className={pct === 100 ? 'text-green-400' : pct >= 75 ? 'text-amber-400' : 'text-red-400'}>
+                    {covered}/{total}
+                  </span>{' '}
+                  recent games
+                </span>
+              );
+            })()}
+          </div>
+          <span className="text-slate-600 text-xs ml-2">{liveFeedOpen ? '▲' : '▼'}</span>
+        </button>
+        {liveFeedOpen && (
+          <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
+            {recentGames.length === 0 ? (
+              <p className="px-4 py-6 text-slate-500 text-sm">No games yet.</p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface z-10">
+                  <tr className="text-slate-500 border-b border-[#2a2a2e]">
+                    <th className="px-3 py-2 text-left">Game</th>
+                    <th className="px-3 py-2 text-left">Date</th>
+                    <th className="px-3 py-2 text-left">Numbers Drawn</th>
+                    <th className="px-3 py-2 text-center" colSpan={10}>Spot predictions (matches · P&L)</th>
+                  </tr>
+                  <tr className="text-slate-600 border-b border-[#2a2a2e]">
+                    <th colSpan={3} />
+                    {[1,2,3,4,5,6,7,8,9,10].map(s => (
+                      <th key={s} className="px-1 py-1 text-center">{s}sp</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentGames.slice(0, 10).map(game => {
+                    const gameResults = resultsByGame.get(game.game_num) ?? [];
+                    const bySpot = new Map(gameResults.map(r => [r.spot_count, r]));
+                    return (
+                      <tr key={game.game_num} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                        <td className="px-3 py-2 font-mono text-slate-400">#{game.game_num}</td>
+                        <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{game.draw_date}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap gap-0.5">
+                            {[...game.hits].sort((a, b) => a - b).map(n => (
+                              <span key={n}
+                                className="w-5 h-5 rounded-full bg-[#2a2a2e] text-slate-300 flex items-center justify-center text-[10px] font-bold">
+                                {n}
+                              </span>
+                            ))}
+                          </div>
+                          {(game.bonus || game.super_bonus) && (
+                            <div className="flex gap-2 mt-1">
+                              {game.bonus && (
+                                <span className="text-[9px] text-amber-400 font-semibold">B:{game.bonus}</span>
+                              )}
+                              {game.super_bonus && (
+                                <span className="text-[9px] text-purple-400 font-semibold">SB:{game.super_bonus}</span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        {[1,2,3,4,5,6,7,8,9,10].map(s => {
+                          const r = bySpot.get(s);
+                          if (!r) return <td key={s} className="px-1 py-2 text-center text-slate-700">—</td>;
+                          const color = r.pnl > 0 ? 'text-green-400' : r.pnl === 0 ? 'text-slate-400' : 'text-red-400';
+                          const bonusBadge = r.bonus_type === 'bonus'
+                            ? <span className="text-[8px] text-amber-400 font-semibold">B×{r.bonus_multiplier}</span>
+                            : r.bonus_type === 'super_bonus'
+                            ? <span className="text-[8px] text-purple-400 font-semibold">SB×{r.bonus_multiplier}</span>
+                            : null;
+                          const cellKey = `${game.game_num}-${s}`;
+                          const isExpanded = expandedPick === cellKey;
+                          return (
+                            <td
+                              key={s}
+                              className={`px-1 py-2 text-center cursor-pointer hover:bg-[#2a2a2e] transition-colors relative ${color}`}
+                              onClick={() => setExpandedPick(isExpanded ? null : cellKey)}
+                            >
+                              {r.matches}/{s}<br />
+                              <span className="text-[10px]">
+                                {r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(0)}
+                              </span>
+                              {bonusBadge && <><br />{bonusBadge}</>}
+                              {isExpanded && (
+                                <div className="absolute z-20 left-1/2 -translate-x-1/2 top-full mt-1 bg-[#16161a] border border-[#333] rounded-lg p-2 shadow-xl min-w-[120px]">
+                                  <div className="text-[9px] text-slate-500 mb-1">Picks</div>
+                                  <div className="flex flex-wrap gap-0.5 justify-center">
+                                    {[...r.picks].sort((a, b) => a - b).map(n => (
+                                      <span
+                                        key={n}
+                                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                                          r.actual_hits.includes(n)
+                                            ? 'bg-crimson text-white'
+                                            : 'bg-[#2a2a2e] text-slate-400'
+                                        }`}
+                                      >
+                                        {n}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Evolution Pulse (Issue 7: collapsible, default collapsed) ── */}
+      <div className="bg-surface rounded-xl overflow-hidden">
+        <button
+          onClick={toggleEvoPulse}
+          className="w-full px-4 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+        >
+          <h2 className="font-semibold text-sm">Evolution Pulse</h2>
+          <span className="text-slate-600 text-xs">{evoPulseOpen ? '▲' : '▼'}</span>
+        </button>
+
+        {evoPulseOpen && (
+          <div className="px-4 pb-4 border-t border-[#2a2a2e] pt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Current Champions — Issue 6: includes picked numbers */}
+              <div>
+                <div className="text-xs text-slate-500 mb-2">Current Champions</div>
+                <div className="grid grid-cols-5 gap-2">
+                  {[1,2,3,4,5,6,7,8,9,10].map(s => {
+                    const champ = champions.find(c => c.spot_count === s);
+                    return (
+                      <div key={s} className="bg-[#0e0e10] rounded-lg p-2 text-center">
+                        <div className="text-xs text-slate-500">{s}-sp</div>
+                        {champ ? (
+                          <>
+                            <div className="text-xs font-mono text-crimson">
+                              #{champ.id}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              G{champ.generation}
+                            </div>
+                            <div className="text-[10px] text-green-400">
+                              {champ.fitness_score !== null ? champ.fitness_score.toFixed(3) : '—'}
+                            </div>
+                            {champ.current_picks && champ.current_picks.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-0.5 justify-center">
+                                {[...champ.current_picks].sort((a, b) => a - b).map(n => (
+                                  <span
+                                    key={n}
+                                    className="inline-block w-4 h-4 rounded-full bg-crimson/20 text-crimson text-[7px] font-bold flex items-center justify-center leading-none"
+                                    style={{ lineHeight: '16px' }}
+                                  >
+                                    {n}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="text-xs text-slate-600 mt-1">—</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Best Fitness by Generation chart (Issue 5: uses strategy birth gen) */}
+              <div>
+                <div className="text-xs text-slate-500 mb-2">Best Fitness by Generation (last 48)</div>
+                {fitnessByGen.length > 1 ? (
+                  <ResponsiveContainer width="100%" height={140}>
+                    <LineChart data={fitnessByGen} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                      <XAxis dataKey="generation" tick={{ fontSize: 9 }} />
+                      <YAxis tick={{ fontSize: 9 }} />
+                      <Tooltip
+                        contentStyle={{ background: '#16161a', border: '1px solid #333', fontSize: 11 }}
+                        formatter={(v: number) => v.toFixed(4)}
+                      />
+                      {[1,2,3,4,5,6,7,8,9,10].map((s, i) => (
+                        <Line
+                          key={s}
+                          dataKey={`s${s}`}
+                          dot={false}
+                          strokeWidth={1.5}
+                          stroke={SPOT_COLORS[i]}
+                          name={`${s}-sp`}
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-36 flex items-center justify-center text-slate-600 text-sm">
+                    Run evolution first to see fitness trends
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── System Health — includes Database stats (Issue 3) ── */}
       {(() => {
         const pollOk = minutesAgo(lastPoll?.occurred_at) < 6;
         const syncOk = minutesAgo(lastSync?.occurred_at) < 65;
+        const dbOk = minutesAgo(latestGameTs) < 10;
         const allOk = pollOk && syncOk;
         return (
           <div className="bg-surface rounded-xl overflow-hidden">
@@ -1450,13 +1609,24 @@ export default function MonitorPage() {
                     {lastSync ? `${minutesAgo(lastSync.occurred_at).toFixed(0)}m ago` : 'never'}
                   </span>
                 </div>
+                {/* Database — formerly a standalone card, now a System Health line item */}
+                <div className="flex items-center gap-2 text-xs pt-1 border-t border-[#1e1e24]">
+                  <Dot ok={dbOk} />
+                  <span className="text-slate-400">Database</span>
+                  <span className="text-slate-600 text-[10px]">
+                    {totalGames.toLocaleString()} games
+                  </span>
+                  <span className="ml-auto text-slate-500 font-mono text-[10px]">
+                    {latestGameTs ? `Latest: ${fmtDate(latestGameTs)}` : 'no data'}
+                  </span>
+                </div>
               </div>
             )}
           </div>
         );
       })()}
 
-      {/* ── Activity Log (collapsed) ── */}
+      {/* ── Activity Log ── */}
       <div className="bg-surface rounded-xl overflow-hidden">
         <button
           onClick={() => setActivityLogOpen(o => !o)}

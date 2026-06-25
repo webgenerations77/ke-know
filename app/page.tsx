@@ -7,38 +7,72 @@ import { supabase } from '@/lib/supabase';
 
 type ArthurMood = 'awakening' | 'curious' | 'focused' | 'optimistic' | 'cautious' | 'frustrated';
 
+// Single config for mood thresholds — per-game P&L keeps mood accurate regardless of total play volume
+const MOOD_THRESHOLDS = {
+  optimistic: 0.20,   // +$0.20/game or better → optimistic
+  focused: -0.10,     // ≥ -$0.10/game → focused (near break-even)
+  cautious: -0.50,    // ≥ -$0.50/game → cautious (mildly negative)
+  // below -$0.50/game → frustrated
+  minPlays: 5,        // < 5 plays → use curiosity/focus based on recency
+  recentEvoMins: 60,  // if last evo < 60 min ago with few plays → focused
+};
+
 const MOOD_META: Record<ArthurMood, {
-  label: string; color: string; stroke: string; bg: string; desc: string; long: string;
+  label: string; color: string; stroke: string; bg: string; desc: string; messages: string[];
 }> = {
   awakening: {
     label: 'Awakening',  color: 'text-slate-400',  stroke: '#64748b', bg: 'rgba(100,116,139,0.10)',
     desc: 'Waiting to evolve',
-    long: 'Arthur has no evolution cycles yet. Feed him historical data and run the first evolution to bring him online.',
+    messages: [
+      'Arthur has no evolution cycles yet. Feed him historical data and run the first evolution to bring him online.',
+      "Still in setup mode — no generation data yet. Run the first evolution cycle and Arthur will start forming his opinions.",
+      "First evolution hasn't happened yet. Arthur is dormant until that initial cycle runs and gives him strategies to believe in.",
+    ],
   },
   curious: {
     label: 'Curious',    color: 'text-blue-400',   stroke: '#60a5fa', bg: 'rgba(96,165,250,0.10)',
     desc: 'Exploring patterns',
-    long: "Arthur is active but hasn't accumulated enough today's shadow plays to form a clear view. He's watching and learning.",
+    messages: [
+      "Arthur is active but hasn't accumulated enough today's shadow plays to form a clear view. He's watching and learning.",
+      "Not enough plays yet to read the session. Arthur is collecting data and holding his judgment for now.",
+      "Early in the day — Arthur is cataloguing draws and building today's picture before committing to an opinion.",
+    ],
   },
   focused: {
     label: 'Focused',    color: 'text-slate-200',  stroke: '#94a3b8', bg: 'rgba(148,163,184,0.08)',
     desc: 'Analyzing data',
-    long: "Arthur is on baseline — steady win rate, roughly break-even P&L. He's locked in on the data without strong signals in either direction.",
+    messages: [
+      "Arthur is on baseline — steady win rate, roughly break-even P&L. He's locked in on the data without strong signals in either direction.",
+      "Neutral territory. Arthur is performing close to expected value and processing each draw without bias.",
+      "Neither hot nor cold — Arthur is reading the patterns carefully and trusting the math. Break-even is still a valid session.",
+    ],
   },
   optimistic: {
     label: 'Optimistic', color: 'text-green-400',  stroke: '#4ade80', bg: 'rgba(74,222,128,0.10)',
     desc: 'Performing well',
-    long: "Today's session is profitable with a win rate above 35%. Arthur's current generation strategies are firing on all cylinders.",
+    messages: [
+      "Today's session is profitable per game. Arthur's current generation strategies are firing on all cylinders.",
+      "Positive expected value realized today — the strategies are delivering. Arthur's confidence in the current generation is high.",
+      "Above break-even and trending green. Arthur sees today's data as validation of the current evolution cycle's edge.",
+    ],
   },
   cautious: {
     label: 'Cautious',   color: 'text-amber-400',  stroke: '#fbbf24', bg: 'rgba(251,191,36,0.10)',
     desc: 'Watching trends',
-    long: "Today's P&L is slightly negative. Arthur is monitoring the session closely and expecting the next evolution cycle to recalibrate.",
+    messages: [
+      "Today's per-game P&L is mildly negative. Arthur is watching closely and expecting the next evolution cycle to recalibrate.",
+      "Slightly underwater. Arthur doesn't panic at small negatives — he adjusts. The next generation will factor in today's draws.",
+      "Losing a little per game today. Arthur is in watchdog mode — logging everything and waiting for the trend to shift before raising an alarm.",
+    ],
   },
   frustrated: {
     label: 'Frustrated', color: 'text-red-400',    stroke: '#f87171', bg: 'rgba(248,113,113,0.10)',
     desc: 'Adapting strategy',
-    long: "Significant losses or a very low win rate today. Arthur knows these runs happen — he'll use this data to drive harder selection pressure in the next generation.",
+    messages: [
+      "Significant losses per game today. Arthur knows these runs happen — he'll use this data to drive harder selection pressure in the next generation.",
+      "Rough session by per-game metrics. Arthur doesn't spiral — he documents and evolves. Bad variance today means better-calibrated strategies tomorrow.",
+      "The draws aren't cooperating. Arthur is frustrated but not defeated — this is exactly the feedback signal that sharpens the next evolution cycle.",
+    ],
   },
 };
 
@@ -148,15 +182,16 @@ function computeMood(
   todayPnl: number,
 ): ArthurMood {
   if (!generation) return 'awakening';
-  if (todayTotal < 5) {
+  if (todayTotal < MOOD_THRESHOLDS.minPlays) {
     const mins = lastRunAt ? (Date.now() - new Date(lastRunAt).getTime()) / 60000 : 9999;
-    return mins < 60 ? 'focused' : 'curious';
+    return mins < MOOD_THRESHOLDS.recentEvoMins ? 'focused' : 'curious';
   }
-  // Align with Monitor's mood thresholds (fire/good/steady/down/waiting)
-  if (todayPnl > 2) return 'optimistic';  // matches Monitor 'fire'/'good'
-  if (todayPnl >= -1) return 'focused';    // matches Monitor 'steady'
-  if (todayPnl >= -5) return 'cautious';   // matches Monitor 'steady' (slightly negative)
-  return 'frustrated';                      // matches Monitor 'down'
+  // Use per-game P&L so mood scales correctly regardless of total play volume
+  const ppg = todayPnl / todayTotal;
+  if (ppg >= MOOD_THRESHOLDS.optimistic) return 'optimistic';
+  if (ppg >= MOOD_THRESHOLDS.focused) return 'focused';
+  if (ppg >= MOOD_THRESHOLDS.cautious) return 'cautious';
+  return 'frustrated';
 }
 
 export default function SplashPage() {
@@ -342,7 +377,9 @@ export default function SplashPage() {
                               <span className="ml-auto text-[9px] text-crimson/70 font-semibold uppercase tracking-widest">now</span>
                             )}
                           </div>
-                          <p className="text-[10px] text-slate-500 leading-relaxed">{meta.long}</p>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">
+                            {meta.messages[Math.floor(Math.random() * meta.messages.length)]}
+                          </p>
                         </div>
                       </div>
                     );

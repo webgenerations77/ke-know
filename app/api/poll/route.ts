@@ -226,6 +226,16 @@ export async function POST(req: NextRequest) {
         await db.from('daily_picks')
           .update({ games_played: newPlayed, status: newStatus })
           .eq('pick_date', today);
+
+        // When session completes, cancel pre-committed lookahead slots that
+        // haven't resolved yet — prevents the LOOKAHEAD=3 buffer from scoring
+        // 1-2 extra games beyond recommended_games.
+        if (newStatus === 'complete' && dailyPickStrategyId != null) {
+          await db.from('pending_predictions')
+            .delete()
+            .eq('strategy_id', dailyPickStrategyId)
+            .eq('scored', false);
+        }
       }
     }
 
