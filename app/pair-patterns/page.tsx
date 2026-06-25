@@ -20,6 +20,9 @@ export default function PairPatternsPage() {
   const [selected, setSelected] = useState<number | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('count');
   const [selectedDow, setSelectedDow] = useState<number | null>(null);
+  const [partnerOpen, setPartnerOpen] = useState(true);
+  const [strongestOpen, setStrongestOpen] = useState(true);
+  const [dowOpen, setDowOpen] = useState(true);
 
   useEffect(() => {
     supabase
@@ -115,14 +118,21 @@ export default function PairPatternsPage() {
 
       {/* ── Partner Breakdown ─────────────────────────────────────────── */}
       {selected !== null && (
-        <div className="bg-surface rounded-xl p-5 space-y-4">
-          <h2 className="text-sm font-semibold text-slate-300">
-            Top partners for{' '}
-            <span className="text-crimson font-bold text-xl">{selected}</span>
-            <span className="text-slate-500 text-xs ml-2">
-              (expected ~{expectedStr} co-occurrences per partner)
-            </span>
-          </h2>
+        <div className="bg-surface rounded-xl overflow-hidden">
+          <button
+            onClick={() => setPartnerOpen(o => !o)}
+            className="w-full px-5 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+          >
+            <h2 className="text-sm font-semibold text-slate-300">
+              Top partners for{' '}
+              <span className="text-crimson font-bold text-xl">{selected}</span>
+              <span className="text-slate-500 text-xs ml-2">
+                (expected ~{expectedStr} co-occurrences per partner)
+              </span>
+            </h2>
+            <span className="text-slate-600 text-xs ml-4 shrink-0">{partnerOpen ? '▲' : '▼'}</span>
+          </button>
+          {partnerOpen && <div className="px-5 pb-5 space-y-4">
 
           {/* Ball grid — click a ball to switch selected number */}
           <div className="flex flex-wrap gap-2">
@@ -180,131 +190,152 @@ export default function PairPatternsPage() {
             </table>
           </div>
           <p className="text-xs text-slate-500">Click any partner to explore their pairs.</p>
+          </div>}
         </div>
       )}
 
       {/* ── Strongest Pairs Overall ───────────────────────────────────── */}
-      <div className="bg-surface rounded-xl p-5 space-y-3">
-        <div className="flex items-center justify-between">
+      <div className="bg-surface rounded-xl overflow-hidden">
+        <button
+          onClick={() => setStrongestOpen(o => !o)}
+          className="w-full px-5 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+        >
           <h2 className="text-sm font-semibold text-slate-300">Strongest Pairs — Top 50</h2>
-          <div className="flex gap-2">
-            {(['count', 'lift'] as SortMode[]).map(m => (
-              <button
-                key={m}
-                onClick={() => setSortMode(m)}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                  sortMode === m
-                    ? 'bg-crimson text-white'
-                    : 'bg-[#0e0e10] border border-[#333] text-slate-400 hover:text-white'
-                }`}
-              >
-                By {m === 'count' ? 'Frequency' : 'Score'}
-              </button>
-            ))}
-          </div>
-        </div>
-        <p className="text-xs text-slate-500">
-          Any pair is expected together ~{expectedStr} times in {games.length.toLocaleString()} draws.
-          Score above 1.0 means they appear together more than chance. Click a number to explore it.
-        </p>
-        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-surface z-10">
-              <tr className="text-xs text-slate-500 border-b border-[#2a2a2e]">
-                <th className="px-3 py-2 text-left">#</th>
-                <th className="px-3 py-2 text-left">Pair</th>
-                <th className="px-3 py-2 text-right">Together</th>
-                <th className="px-3 py-2 text-right">% of Games</th>
-                <th className="px-3 py-2 text-right">Expected</th>
-                <th className="px-3 py-2 text-right">Score</th>
-              </tr>
-            </thead>
-            <tbody>
-              {top50.map(({ a, b, count, lift, pct, expected }, i) => (
-                <tr key={`${a}-${b}`} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
-                  <td className="px-3 py-2 text-slate-500 text-xs">{i + 1}</td>
-                  <td className="px-3 py-2">
-                    <div className="flex gap-1.5 items-center">
-                      <button
-                        onClick={() => setSelected(a)}
-                        className="w-7 h-7 rounded-full bg-crimson/80 hover:bg-crimson text-white text-xs font-bold transition-colors"
-                      >
-                        {a}
-                      </button>
-                      <span className="text-slate-600 text-xs">+</span>
-                      <button
-                        onClick={() => setSelected(b)}
-                        className="w-7 h-7 rounded-full bg-crimson/80 hover:bg-crimson text-white text-xs font-bold transition-colors"
-                      >
-                        {b}
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-right font-bold">{count}</td>
-                  <td className="px-3 py-2 text-right">{pct.toFixed(1)}%</td>
-                  <td className="px-3 py-2 text-right text-slate-500">{expected.toFixed(0)}</td>
-                  <td className={`px-3 py-2 text-right font-mono font-bold ${
-                    lift > 1.1 ? 'text-red-400' : lift < 0.9 ? 'text-blue-400' : 'text-slate-400'
-                  }`}>
-                    {lift.toFixed(2)}×
-                  </td>
-                </tr>
+          <div className="flex items-center gap-3">
+            <div className="flex gap-2" onClick={e => e.stopPropagation()}>
+              {(['count', 'lift'] as SortMode[]).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setSortMode(m)}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                    sortMode === m
+                      ? 'bg-crimson text-white'
+                      : 'bg-[#0e0e10] border border-[#333] text-slate-400 hover:text-white'
+                  }`}
+                >
+                  By {m === 'count' ? 'Frequency' : 'Score'}
+                </button>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </div>
+            <span className="text-slate-600 text-xs">{strongestOpen ? '▲' : '▼'}</span>
+          </div>
+        </button>
+        {strongestOpen && (
+          <div className="px-5 pb-5 space-y-3 border-t border-[#2a2a2e] pt-3">
+            <p className="text-xs text-slate-500">
+              Any pair is expected together ~{expectedStr} times in {games.length.toLocaleString()} draws.
+              Score above 1.0 means they appear together more than chance. Click a number to explore it.
+            </p>
+            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-surface z-10">
+                  <tr className="text-xs text-slate-500 border-b border-[#2a2a2e]">
+                    <th className="px-3 py-2 text-left">#</th>
+                    <th className="px-3 py-2 text-left">Pair</th>
+                    <th className="px-3 py-2 text-right">Together</th>
+                    <th className="px-3 py-2 text-right">% of Games</th>
+                    <th className="px-3 py-2 text-right">Expected</th>
+                    <th className="px-3 py-2 text-right">Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {top50.map(({ a, b, count, lift, pct, expected }, i) => (
+                    <tr key={`${a}-${b}`} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                      <td className="px-3 py-2 text-slate-500 text-xs">{i + 1}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex gap-1.5 items-center">
+                          <button
+                            onClick={() => setSelected(a)}
+                            className="w-7 h-7 rounded-full bg-crimson/80 hover:bg-crimson text-white text-xs font-bold transition-colors"
+                          >
+                            {a}
+                          </button>
+                          <span className="text-slate-600 text-xs">+</span>
+                          <button
+                            onClick={() => setSelected(b)}
+                            className="w-7 h-7 rounded-full bg-crimson/80 hover:bg-crimson text-white text-xs font-bold transition-colors"
+                          >
+                            {b}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-right font-bold">{count}</td>
+                      <td className="px-3 py-2 text-right">{pct.toFixed(1)}%</td>
+                      <td className="px-3 py-2 text-right text-slate-500">{expected.toFixed(0)}</td>
+                      <td className={`px-3 py-2 text-right font-mono font-bold ${
+                        lift > 1.1 ? 'text-red-400' : lift < 0.9 ? 'text-blue-400' : 'text-slate-400'
+                      }`}>
+                        {lift.toFixed(2)}×
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Day-of-Week Patterns (reliable, from draw_date) ──────────── */}
-      <div className="bg-surface rounded-xl p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-slate-300">
-          Draws by Day of Week
-          <span className="ml-2 text-xs text-slate-500 font-normal">— from actual draw date</span>
-        </h2>
-        <div className="grid md:grid-cols-2 gap-6 items-start">
-          <div>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={dowFreq}>
-                <XAxis dataKey="label" tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={{ background: '#16161a', border: '1px solid #333', borderRadius: 8 }}
-                  formatter={(v: number) => [v, 'Draws']}
-                />
-                <Bar
-                  dataKey="count"
-                  fill="#8B1A4A"
-                  radius={[4, 4, 0, 0]}
-                  cursor="pointer"
-                  onClick={(d: { dow: number }) => setSelectedDow(selectedDow === d.dow ? null : d.dow)}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-            <p className="text-xs text-slate-500 mt-2">Click a bar to see hottest numbers that day.</p>
-          </div>
-
-          {selectedDow !== null && hotByDow.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-slate-400 mb-2">
-                Top numbers on {DOW_LABELS[selectedDow]}s
-              </h3>
-              <div className="flex flex-wrap gap-1.5">
-                {hotByDow.map(({ number, count, pct }) => (
-                  <div
-                    key={number}
-                    className="bg-[#0e0e10] rounded-lg px-2.5 py-2 text-center cursor-pointer hover:bg-[#2a2a2e]"
-                    onClick={() => setSelected(number)}
-                    title="Click to explore pairs"
-                  >
-                    <div className="text-base font-bold text-white">{number}</div>
-                    <div className="text-xs text-slate-500">{pct.toFixed(1)}%</div>
-                  </div>
-                ))}
+      <div className="bg-surface rounded-xl overflow-hidden">
+        <button
+          onClick={() => setDowOpen(o => !o)}
+          className="w-full px-5 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+        >
+          <h2 className="text-sm font-semibold text-slate-300">
+            Draws by Day of Week
+            <span className="ml-2 text-xs text-slate-500 font-normal">— from actual draw date</span>
+          </h2>
+          <span className="text-slate-600 text-xs">{dowOpen ? '▲' : '▼'}</span>
+        </button>
+        {dowOpen && (
+          <div className="px-5 pb-5 space-y-4 border-t border-[#2a2a2e] pt-4">
+            <div className="grid md:grid-cols-2 gap-6 items-start">
+              <div>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={dowFreq}>
+                    <XAxis dataKey="label" tick={{ fill: '#94a3b8', fontSize: 12 }} />
+                    <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ background: '#16161a', border: '1px solid #333', borderRadius: 8 }}
+                      formatter={(v: number) => [v, 'Draws']}
+                    />
+                    <Bar
+                      dataKey="count"
+                      fill="#8B1A4A"
+                      radius={[4, 4, 0, 0]}
+                      cursor="pointer"
+                      onClick={(d: { dow: number }) => setSelectedDow(selectedDow === d.dow ? null : d.dow)}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+                <p className="text-xs text-slate-500 mt-2">Click a bar to see hottest numbers that day.</p>
               </div>
-              <p className="text-xs text-slate-500 mt-2">Click a number to explore its pairs.</p>
+
+              {selectedDow !== null && hotByDow.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-400 mb-2">
+                    Top numbers on {DOW_LABELS[selectedDow]}s
+                  </h3>
+                  <div className="flex flex-wrap gap-1.5">
+                    {hotByDow.map(({ number, count, pct }) => (
+                      <div
+                        key={number}
+                        className="bg-[#0e0e10] rounded-lg px-2.5 py-2 text-center cursor-pointer hover:bg-[#2a2a2e]"
+                        onClick={() => setSelected(number)}
+                        title="Click to explore pairs"
+                      >
+                        <div className="text-base font-bold text-white">{number}</div>
+                        <div className="text-xs text-slate-500">{pct.toFixed(1)}%</div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">Click a number to explore its pairs.</p>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1143,6 +1143,13 @@ export default function MonitorPage() {
           ok={!lastEvo || lastEvo.severity !== 'error'}
           onClick={() => setEvoDetailOpen(o => !o)}
         />
+        <StatCard
+          label="Biggest Win"
+          value={biggestWinResult ? `$${biggestWinResult.prize}` : '—'}
+          sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · ${new Date(biggestWinResult.scored_at).toLocaleDateString()}` : 'No wins yet'}
+          onClick={() => setBiggestWinOpen(o => !o)}
+        />
+      </div>
 
       {/* ── Evolution Generation Breakdown ── */}
       {evoDetailOpen && (
@@ -1261,14 +1268,6 @@ export default function MonitorPage() {
           )}
         </div>
       )}
-
-        <StatCard
-          label="Biggest Win"
-          value={biggestWinResult ? `$${biggestWinResult.prize}` : '—'}
-          sub={biggestWinResult ? `${biggestWinResult.spot_count}-spot · ${biggestWinResult.matches}/${biggestWinResult.spot_count} · ${new Date(biggestWinResult.scored_at).toLocaleDateString()}` : 'No wins yet'}
-          onClick={() => setBiggestWinOpen(o => !o)}
-        />
-      </div>
 
       {/* ── Biggest Win 14-Day History ── */}
       {biggestWinOpen && (
@@ -1406,7 +1405,7 @@ export default function MonitorPage() {
                 <thead className="sticky top-0 bg-surface z-10">
                   <tr className="text-slate-500 border-b border-[#2a2a2e]">
                     <th className="px-3 py-2 text-left">Game</th>
-                    <th className="px-3 py-2 text-left">Date</th>
+                    <th className="px-3 py-2 text-left">Date / Time</th>
                     <th className="px-3 py-2 text-left">Numbers Drawn</th>
                     <th className="px-3 py-2 text-center" colSpan={10}>Spot predictions (matches · P&L)</th>
                   </tr>
@@ -1424,7 +1423,14 @@ export default function MonitorPage() {
                     return (
                       <tr key={game.game_num} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
                         <td className="px-3 py-2 font-mono text-slate-400">#{game.game_num}</td>
-                        <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{game.draw_date}</td>
+                        <td className="px-3 py-2 text-slate-400 whitespace-nowrap">
+                          <div>{game.draw_date}</div>
+                          {game.draw_iso && (
+                            <div className="text-[10px] text-slate-600">
+                              {new Date(game.draw_iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-3 py-2">
                           <div className="flex flex-wrap gap-0.5">
                             {[...game.hits].sort((a, b) => a - b).map(n => (

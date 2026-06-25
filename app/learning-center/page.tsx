@@ -45,6 +45,7 @@ export default function SimulatorPage() {
   const [currentGen, setCurrentGen] = useState(0);
   const [champCount, setChampCount] = useState(0);
   const [lastReplay, setLastReplay] = useState('');
+  const [lastTrained, setLastTrained] = useState('');
   const [replaying, setReplaying] = useState(false);
   const [genDetailOpen, setGenDetailOpen] = useState(false);
 
@@ -60,7 +61,7 @@ export default function SimulatorPage() {
       ] = await Promise.all([
         supabase.from('live_results').select('strategy_id, spot_count, prize, pnl, matches').limit(50000),
         supabase.from('strategies').select('id, generation, spot_count, status'),
-        supabase.from('evolution_state').select('current_generation').eq('id', 1).single(),
+        supabase.from('evolution_state').select('current_generation, last_run_at').eq('id', 1).single(),
         supabase.from('games').select('game_num', { count: 'exact', head: true }),
         supabase.from('strategy_results').select('generation, spot_count, fitness_score').order('generation', { ascending: true }).limit(2000),
         supabase.from('system_events').select('occurred_at').eq('event_type', 'simulator_replay').order('occurred_at', { ascending: false }).limit(1),
@@ -131,6 +132,7 @@ export default function SimulatorPage() {
       setTotalResults(results.length);
       setTotalGames(gamesCount ?? 0);
       setCurrentGen(evoState?.current_generation ?? 0);
+      setLastTrained((evoState as { current_generation?: number; last_run_at?: string } | null)?.last_run_at ?? '');
       setChampCount(strats.filter(s => s.status === 'promoted').length);
       setLastReplay((replayEvt?.[0] as { occurred_at?: string } | undefined)?.occurred_at ?? '');
       setLoading(false);
@@ -153,6 +155,11 @@ export default function SimulatorPage() {
         <p className="text-sm text-slate-400 mt-1">
           How Arthur performs when practicing against the game archive. These results feed directly into his evolution fitness scores.
         </p>
+        {lastTrained && (
+          <p className="text-xs text-slate-600 mt-1">
+            Last trained: {new Date(lastTrained).toLocaleString()}
+          </p>
+        )}
       </div>
 
       {/* ── Summary Cards ── */}

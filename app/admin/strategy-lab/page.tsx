@@ -60,6 +60,11 @@ export default function StrategyLabPage() {
   const [sortKey, setSortKey] = useState<'fitness_score' | 'oos_ppg' | 'live_ppg' | 'win_rate'>('fitness_score');
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [explorer, setExplorer] = useState<GenomeExplorer>({ open: false, strategy: null, history: [] });
+  const [champOpen, setChampOpen] = useState(true);
+  const [spotChampsOpen, setSpotChampsOpen] = useState(true);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(true);
+  const [fitnessChartOpen, setFitnessChartOpen] = useState(true);
+  const [liveFeedOpen, setLiveFeedOpen] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -214,53 +219,74 @@ export default function StrategyLabPage() {
       <h1 className="text-2xl font-bold">Strategy Lab</h1>
 
       {/* ── Section 1: Overall Champion ── */}
-      {overallChamp ? (
-        <div className="bg-surface rounded-xl p-5 border border-crimson/30">
-          <div className="flex items-center gap-2 mb-3">
+      <div className="bg-surface rounded-xl overflow-hidden border border-crimson/20">
+        <button
+          onClick={() => setChampOpen(o => !o)}
+          className="w-full px-5 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+        >
+          <div className="flex items-center gap-2">
             <span className="text-crimson text-lg">★</span>
             <h2 className="font-semibold">Overall Champion</h2>
-            <span className="text-xs text-slate-500">#{overallChamp.id} · Gen {overallChamp.generation} · {overallChamp.spot_count}-spot</span>
-            <StatusBadge status={overallChamp.status} />
+            {overallChamp && (
+              <span className="text-xs text-slate-500">#{overallChamp.id} · Gen {overallChamp.generation} · {overallChamp.spot_count}-spot</span>
+            )}
           </div>
-          <p className="text-xs text-slate-400 mb-4 italic">{describeGenome(overallChamp.genome as unknown as StrategyGenome)}</p>
+          <span className="text-slate-600 text-xs">{champOpen ? '▲' : '▼'}</span>
+        </button>
+        {champOpen && (
+          <div className="px-5 pb-5 border-t border-[#2a2a2e] pt-4">
+            {overallChamp ? (
+              <>
+                <div className="flex items-center gap-2 mb-3">
+                  <StatusBadge status={overallChamp.status} />
+                </div>
+                <p className="text-xs text-slate-400 mb-4 italic">{describeGenome(overallChamp.genome as unknown as StrategyGenome)}</p>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4 text-sm">
-            {[
-              { label: 'Fitness', value: overallChamp.latestResult?.fitness_score?.toFixed(4) ?? '—' },
-              { label: 'OOS P&L/game', value: overallChamp.latestResult?.oos_ppg != null ? `$${overallChamp.latestResult.oos_ppg.toFixed(3)}` : overallChamp.latestResult?.test_pnl_per_game != null ? `$${overallChamp.latestResult.test_pnl_per_game.toFixed(3)}` : '—' },
-              { label: 'Live P&L/game', value: overallChamp.livePlays > 0 ? `$${overallChamp.livePnlPerGame.toFixed(3)}` : '—' },
-              { label: 'Trust Factor', value: overallChamp.latestResult?.live_trust_factor != null ? `${(overallChamp.latestResult.live_trust_factor * 100).toFixed(0)}%` : '—' },
-              { label: 'Overfit Gap', value: overallChamp.latestResult?.overfit_gap != null ? overallChamp.latestResult.overfit_gap.toFixed(4) : '—' },
-            ].map(({ label, value }) => (
-              <div key={label} className="bg-[#0e0e10] rounded-lg p-3">
-                <div className="text-xs text-slate-500">{label}</div>
-                <div className="font-bold mt-0.5">{value}</div>
-              </div>
-            ))}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4 text-sm">
+                  {[
+                    { label: 'Fitness', value: overallChamp.latestResult?.fitness_score?.toFixed(4) ?? '—' },
+                    { label: 'OOS P&L/game', value: overallChamp.latestResult?.oos_ppg != null ? `$${overallChamp.latestResult.oos_ppg.toFixed(3)}` : overallChamp.latestResult?.test_pnl_per_game != null ? `$${overallChamp.latestResult.test_pnl_per_game.toFixed(3)}` : '—' },
+                    { label: 'Live P&L/game', value: overallChamp.livePlays > 0 ? `$${overallChamp.livePnlPerGame.toFixed(3)}` : '—' },
+                    { label: 'Trust Factor', value: overallChamp.latestResult?.live_trust_factor != null ? `${(overallChamp.latestResult.live_trust_factor * 100).toFixed(0)}%` : '—' },
+                    { label: 'Overfit Gap', value: overallChamp.latestResult?.overfit_gap != null ? overallChamp.latestResult.overfit_gap.toFixed(4) : '—' },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="bg-[#0e0e10] rounded-lg p-3">
+                      <div className="text-xs text-slate-500">{label}</div>
+                      <div className="font-bold mt-0.5">{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {overallChamp.latestResult?.picks_snapshot && (
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {overallChamp.latestResult.picks_snapshot.map(n => <Ball key={n} n={n} active />)}
+                  </div>
+                )}
+
+                <button
+                  onClick={() => openExplorer(overallChamp)}
+                  className="text-xs px-3 py-1.5 rounded border border-[#333] text-slate-300 hover:bg-[#2a2a2e]"
+                >
+                  Explore Genome
+                </button>
+              </>
+            ) : (
+              <p className="text-slate-500 text-sm">No champion yet. Run the hourly sync to start evolution.</p>
+            )}
           </div>
-
-          {overallChamp.latestResult?.picks_snapshot && (
-            <div className="flex flex-wrap gap-2 mb-4">
-              {overallChamp.latestResult.picks_snapshot.map(n => <Ball key={n} n={n} active />)}
-            </div>
-          )}
-
-          <button
-            onClick={() => openExplorer(overallChamp)}
-            className="text-xs px-3 py-1.5 rounded border border-[#333] text-slate-300 hover:bg-[#2a2a2e]"
-          >
-            Explore Genome
-          </button>
-        </div>
-      ) : (
-        <div className="bg-surface rounded-xl p-5 text-slate-500 text-sm">
-          No champion yet. Run the hourly sync to start evolution.
-        </div>
-      )}
+        )}
+      </div>
 
       {/* ── Section 2: Champion per Spot Count ── */}
-      <div>
-        <h2 className="font-semibold text-sm text-slate-400 mb-3">Champion per Spot Count</h2>
+      <div className="bg-surface rounded-xl overflow-hidden">
+        <button
+          onClick={() => setSpotChampsOpen(o => !o)}
+          className="w-full px-5 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+        >
+          <h2 className="font-semibold text-sm">Champion per Spot Count</h2>
+          <span className="text-slate-600 text-xs">{spotChampsOpen ? '▲' : '▼'}</span>
+        </button>
+        {spotChampsOpen && <div className="px-5 pb-5 border-t border-[#2a2a2e] pt-4">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {[1,2,3,4,5,6,7,8,9,10].map(s => {
             const champ = promoted.find(p => p.spot_count === s);
@@ -301,23 +327,30 @@ export default function StrategyLabPage() {
             );
           })}
         </div>
+        </div>}
       </div>
 
       {/* ── Section 3: Full Leaderboard ── */}
       <div className="bg-surface rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#2a2a2e] flex flex-wrap items-center gap-3">
+        <button
+          onClick={() => setLeaderboardOpen(o => !o)}
+          className="w-full px-4 py-3 flex flex-wrap items-center gap-3 hover:bg-[#1e1e24] transition-colors text-left"
+        >
           <h2 className="font-semibold text-sm">Leaderboard</h2>
           <span className="text-xs text-slate-500">{filtered.length} strategies</span>
-          <select
-            value={filterSpot}
-            onChange={e => setFilterSpot(parseInt(e.target.value))}
-            className="ml-auto bg-[#0e0e10] border border-[#333] text-xs rounded px-2 py-1 text-white"
-          >
-            <option value={0}>All spots</option>
-            {[1,2,3,4,5,6,7,8,9,10].map(s => <option key={s} value={s}>{s} spots</option>)}
-          </select>
-        </div>
-        <div className="overflow-x-auto max-h-96">
+          <div className="ml-auto flex items-center gap-3" onClick={e => e.stopPropagation()}>
+            <select
+              value={filterSpot}
+              onChange={e => setFilterSpot(parseInt(e.target.value))}
+              className="bg-[#0e0e10] border border-[#333] text-xs rounded px-2 py-1 text-white"
+            >
+              <option value={0}>All spots</option>
+              {[1,2,3,4,5,6,7,8,9,10].map(s => <option key={s} value={s}>{s} spots</option>)}
+            </select>
+          </div>
+          <span className="text-slate-600 text-xs">{leaderboardOpen ? '▲' : '▼'}</span>
+        </button>
+        {leaderboardOpen && <div className="overflow-x-auto max-h-96 border-t border-[#2a2a2e]">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-surface z-10">
               <tr className="text-slate-500 border-b border-[#2a2a2e]">
@@ -337,7 +370,7 @@ export default function StrategyLabPage() {
             </thead>
             <tbody>
               {filtered.slice(0, 200).map((s, i) => (
-                <tr key={s.id} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
+                <tr key={s.id} className="border-b border-[#1e1e24] hover:bg-[#1e1e24] cursor-pointer" onClick={() => openExplorer(s)}>
                   <td className="px-3 py-2 text-slate-600">{i + 1}</td>
                   <td className="px-3 py-2 font-mono text-slate-400">#{s.id}</td>
                   <td className="px-3 py-2">{s.spot_count}</td>
@@ -361,22 +394,29 @@ export default function StrategyLabPage() {
                   <td className="px-3 py-2"><StatusBadge status={s.status} /></td>
                   <td className="px-3 py-2">
                     <button
-                      onClick={() => openExplorer(s)}
+                      onClick={e => { e.stopPropagation(); openExplorer(s); }}
                       className="text-slate-600 hover:text-white text-xs"
                     >
-                      Explore
+                      →
                     </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </div>}
       </div>
 
       {/* ── Section 4: Evolution History Chart ── */}
-      <div className="bg-surface rounded-xl p-4">
-        <h2 className="font-semibold text-sm mb-4">Evolution Fitness History</h2>
+      <div className="bg-surface rounded-xl overflow-hidden">
+        <button
+          onClick={() => setFitnessChartOpen(o => !o)}
+          className="w-full px-4 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+        >
+          <h2 className="font-semibold text-sm">Evolution Fitness History</h2>
+          <span className="text-slate-600 text-xs">{fitnessChartOpen ? '▲' : '▼'}</span>
+        </button>
+        {fitnessChartOpen && <div className="px-4 pb-4 border-t border-[#2a2a2e] pt-4">
         {genFitness.length > 1 ? (
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={genFitness} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
@@ -403,17 +443,24 @@ export default function StrategyLabPage() {
             Evolution fitness history will appear here after the first run.
           </div>
         )}
+        </div>}
       </div>
 
       {/* ── Section 5: Live Prediction Feed ── */}
       <div className="bg-surface rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#2a2a2e] flex items-center justify-between">
+        <button
+          onClick={() => setLiveFeedOpen(o => !o)}
+          className="w-full px-4 py-3 flex items-center justify-between hover:bg-[#1e1e24] transition-colors"
+        >
           <h2 className="font-semibold text-sm">Live Prediction Feed</h2>
-          <span className={`text-xs font-semibold ${liveTodayPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            24h P&L: {liveTodayPnl >= 0 ? '+' : ''}${liveTodayPnl.toFixed(2)}
-          </span>
-        </div>
-        <div className="overflow-x-auto max-h-80">
+          <div className="flex items-center gap-3">
+            <span className={`text-xs font-semibold ${liveTodayPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              24h P&L: {liveTodayPnl >= 0 ? '+' : ''}${liveTodayPnl.toFixed(2)}
+            </span>
+            <span className="text-slate-600 text-xs">{liveFeedOpen ? '▲' : '▼'}</span>
+          </div>
+        </button>
+        {liveFeedOpen && <div className="overflow-x-auto max-h-80 border-t border-[#2a2a2e]">
           {recentLive.length === 0 ? (
             <p className="px-4 py-6 text-slate-500 text-sm">No shadow plays yet. Shadow plays appear after the poll starts scoring predictions.</p>
           ) : (
@@ -476,7 +523,7 @@ export default function StrategyLabPage() {
               </tbody>
             </table>
           )}
-        </div>
+        </div>}
       </div>
 
       {/* ── Section 6: Genome Explorer Slide-over ── */}

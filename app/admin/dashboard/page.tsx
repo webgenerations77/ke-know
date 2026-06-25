@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import { supabase, Game, SyncLog, Strategy, StrategyResult, EvolutionState } from '@/lib/supabase';
 import { computeNumberStats } from '@/lib/analysis';
-import { computePrediction, computeMomentum, DOW_LABELS } from '@/lib/prediction-engine';
+import { computeMomentum, DOW_LABELS } from '@/lib/prediction-engine';
 
 const CRIMSON = '#8B1A4A';
 const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -133,7 +133,6 @@ export default function DashboardPage() {
   const avgPerDay = +(filteredGames.length / dayRange).toFixed(1);
 
   const stats = computeNumberStats(filteredGames);
-  const prediction = filteredGames.length >= 50 ? computePrediction(filteredGames, 8) : null;
   const momentum = filteredGames.length >= 50 ? computeMomentum(filteredGames) : [];
 
   // Sync health (always from full data, not filtered)
@@ -163,8 +162,6 @@ export default function DashboardPage() {
 
   // Recent draws for display
   const recentDraws = sortedDesc.slice(0, 8);
-
-  const topPicks = prediction?.picks.slice(0, 6) ?? [];
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -246,7 +243,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Summary metrics ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatCard
           label="Games in DB"
           value={totalDbCount.toLocaleString()}
@@ -262,18 +259,6 @@ export default function DashboardPage() {
           value={syncHealth}
           sub={syncAgeMins !== null ? `${syncAgeMins}m ago · +${lastSync?.games_added ?? 0} last sync` : 'Never synced'}
           accent={syncColor}
-        />
-        <StatCard
-          label="Prediction Confidence"
-          value={prediction ? `${prediction.overallConfidence}/100` : '—'}
-          sub={prediction ? `Best day: ${prediction.whenToPlay}` : 'Not enough data'}
-          accent={
-            prediction
-              ? prediction.overallConfidence > 65 ? 'text-green-400'
-              : prediction.overallConfidence > 45 ? 'text-yellow-400'
-              : 'text-slate-300'
-              : 'text-slate-500'
-          }
         />
       </div>
 
@@ -325,57 +310,6 @@ export default function DashboardPage() {
       {filteredGames.length < 50 && (
         <div className="bg-yellow-900/20 border border-yellow-800 rounded-xl p-4 text-sm text-yellow-300">
           Not enough data with the current filter ({filteredGames.length} games). Try widening the window or removing the day filter.
-        </div>
-      )}
-
-      {/* ── Today's Top Picks ───────────────────────────────────────────────── */}
-      {prediction && (
-        <div className="bg-surface rounded-xl p-5">
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <h2 className="font-semibold">
-                Today's Algorithm Picks
-                {dowFilter !== null && <span className="text-slate-400 font-normal text-sm ml-2">({DOW_LABELS[dowFilter]}s only)</span>}
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">Top 6 of {prediction.spotCount}-spot recommendation · 5 weighted signals</p>
-            </div>
-            <a href="/prediction-portal" className="text-xs text-crimson hover:underline">Full Portal →</a>
-          </div>
-
-          <div className="flex flex-wrap gap-2 mb-4">
-            {topPicks.map(p => (
-              <div key={p.number}
-                className={`w-12 h-12 rounded-lg flex flex-col items-center justify-center ${
-                  p.recommendation === 'Strong Play'
-                    ? 'bg-crimson text-white shadow-lg shadow-crimson/20'
-                    : 'bg-[#1a3a5e] text-blue-200'
-                }`}
-              >
-                <span className="text-base font-bold">{p.number}</span>
-                <span className="text-[9px] opacity-70">{p.confidence}</span>
-              </div>
-            ))}
-            <div className="flex items-center ml-2">
-              <a href="/prediction-portal" className="text-xs text-slate-500 hover:text-white">
-                +{prediction.picks.length - 6} more →
-              </a>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3 text-center">
-            <div className="bg-[#0e0e10] rounded-lg p-2">
-              <div className="text-xs text-slate-500">Best Day</div>
-              <div className="text-sm font-semibold text-white">{prediction.whenToPlay}</div>
-            </div>
-            <div className="bg-[#0e0e10] rounded-lg p-2">
-              <div className="text-xs text-slate-500">Games / Session</div>
-              <div className="text-sm font-semibold text-white">{prediction.howManyGames}</div>
-            </div>
-            <div className="bg-[#0e0e10] rounded-lg p-2">
-              <div className="text-xs text-slate-500">Expected Match Rate</div>
-              <div className="text-sm font-semibold text-white">~{prediction.predictedMatchRate.toFixed(1)}/draw</div>
-            </div>
-          </div>
         </div>
       )}
 

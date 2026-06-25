@@ -413,53 +413,6 @@ export default function SpotAdvisorPage() {
         </p>
       </div>
 
-      {/* Spot comparison table */}
-      <div className="bg-surface rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-xs text-slate-500 border-b border-[#2a2a2e]">
-                <th className="px-4 py-3 text-left">Spots</th>
-                <th className="px-4 py-3 text-left">Overall Odds</th>
-                <th className="px-4 py-3 text-right">Top Prize</th>
-                <th className="px-4 py-3 text-right">EV / ${wager}</th>
-                <th className="px-4 py-3 text-right">Historical Hit%</th>
-                <th className="px-4 py-3 text-center">Best</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(row => (
-                <tr
-                  key={row.spots}
-                  className={`border-b border-[#1e1e24] hover:bg-[#1e1e24] transition-colors ${
-                    row.isBest ? 'bg-crimson/10' : ''
-                  }`}
-                >
-                  <td className="px-4 py-3 font-semibold">{row.spots}</td>
-                  <td className="px-4 py-3 text-slate-400">{row.oddsDisplay}</td>
-                  <td className="px-4 py-3 text-right">
-                    {fmt(row.topPrize * wager)}
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono text-green-400">
-                    {fmtEv(row.evPerDollar * prizeScale, wager)}
-                  </td>
-                  <td className="px-4 py-3 text-right text-slate-400">
-                    {row.historicalHitRate !== null ? `${row.historicalHitRate.toFixed(1)}%` : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    {row.isBest && (
-                      <span className="px-2 py-0.5 rounded-full bg-crimson text-white text-xs font-semibold">
-                        Best EV
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
     </div>
   );
 }
