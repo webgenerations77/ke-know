@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import Lottie from 'lottie-react';
 import { supabase } from '@/lib/supabase';
 import type { SystemEvent, LiveResult, Game, EvolutionState } from '@/lib/supabase';
 import {
@@ -473,6 +474,7 @@ export default function MonitorPage() {
   const [expandedPick, setExpandedPick] = useState<string | null>(null);
   const [eventsPage, setEventsPage] = useState(1);
   const [mounted, setMounted] = useState(false);
+  const [lottieData, setLottieData] = useState<object | null>(null);
   const [loadingPhase, setLoadingPhase] = useState<'loading' | 'exiting' | 'done'>('loading');
   const [loadingMsgIdx, setLoadingMsgIdx] = useState(0);
   const [evoDetailOpen, setEvoDetailOpen] = useState(false);
@@ -673,10 +675,10 @@ export default function MonitorPage() {
 
   useEffect(() => {
     setMounted(true);
-    // Restore collapsible prefs from localStorage
     setLiveFeedOpen(lsGet('monitor_liveFeed', false));
     setEvoPulseOpen(lsGet('monitor_evoPulse', false));
     loadAll();
+    fetch('/loading.json').then(r => r.json()).then(setLottieData).catch(() => {});
   }, [loadAll]);
 
   useEffect(() => {
@@ -947,25 +949,26 @@ export default function MonitorPage() {
             background: 'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(139,26,74,0.10) 0%, transparent 70%)',
           }} />
 
-          {/* Pulse rings */}
-          <div className="relative flex items-center justify-center mb-8">
-            <span className="absolute w-40 h-40 rounded-full border border-crimson/10 animate-ping" style={{ animationDuration: '2.4s' }} />
-            <span className="absolute w-28 h-28 rounded-full border border-crimson/15 animate-ping" style={{ animationDuration: '2.4s', animationDelay: '0.6s' }} />
-            <span className="absolute w-20 h-20 rounded-full bg-crimson/5 animate-ping" style={{ animationDuration: '2.4s', animationDelay: '1.2s' }} />
-
-            {/* Arthur face — awakening (sleeping) */}
-            <div className="relative z-10 flex items-center justify-center w-20 h-20 rounded-full bg-crimson/8 border border-crimson/20">
-              <svg width="80" height="80" viewBox="0 0 32 32">
-                {/* Closed eyes */}
-                <line x1="9" y1="13" x2="13" y2="13" stroke="#8B1A4A" strokeWidth="1.8" strokeLinecap="round"/>
-                <line x1="19" y1="13" x2="23" y2="13" stroke="#8B1A4A" strokeWidth="1.8" strokeLinecap="round"/>
-                {/* Gentle smile */}
-                <path d="M12,20 Q16,22 20,20" stroke="#8B1A4A" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
-                {/* z z */}
-                <text x="20.5" y="10" fontSize="5.5" fill="#8B1A4A" fontWeight="700" opacity="0.85">z</text>
-                <text x="24" y="7.5" fontSize="3.8" fill="#8B1A4A" fontWeight="700" opacity="0.5">z</text>
-              </svg>
-            </div>
+          {/* Animation: Lottie if loaded, else SVG pulse */}
+          <div className="relative z-10 mb-2">
+            {lottieData ? (
+              <Lottie animationData={lottieData} loop style={{ width: 260, height: 260 }} />
+            ) : (
+              <div className="relative flex items-center justify-center" style={{ width: 160, height: 160 }}>
+                <span className="absolute w-40 h-40 rounded-full border border-crimson/10 animate-ping" style={{ animationDuration: '2.4s' }} />
+                <span className="absolute w-28 h-28 rounded-full border border-crimson/15 animate-ping" style={{ animationDuration: '2.4s', animationDelay: '0.6s' }} />
+                <span className="absolute w-20 h-20 rounded-full bg-crimson/5 animate-ping" style={{ animationDuration: '2.4s', animationDelay: '1.2s' }} />
+                <div className="relative z-10 flex items-center justify-center w-20 h-20 rounded-full bg-crimson/8 border border-crimson/20">
+                  <svg width="80" height="80" viewBox="0 0 32 32">
+                    <line x1="9" y1="13" x2="13" y2="13" stroke="#8B1A4A" strokeWidth="1.8" strokeLinecap="round"/>
+                    <line x1="19" y1="13" x2="23" y2="13" stroke="#8B1A4A" strokeWidth="1.8" strokeLinecap="round"/>
+                    <path d="M12,20 Q16,22 20,20" stroke="#8B1A4A" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+                    <text x="20.5" y="10" fontSize="5.5" fill="#8B1A4A" fontWeight="700" opacity="0.85">z</text>
+                    <text x="24" y="7.5" fontSize="3.8" fill="#8B1A4A" fontWeight="700" opacity="0.5">z</text>
+                  </svg>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Label + cycling message */}
