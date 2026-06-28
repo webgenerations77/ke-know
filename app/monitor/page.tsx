@@ -618,13 +618,10 @@ export default function MonitorPage() {
       );
       setChampions(champData);
 
-      // Issue 2: derive display generation from max of stored state and champion generations
       const storedGen: number = (evo as EvolutionState | null)?.current_generation ?? 0;
       const maxChampGen = champData.reduce((m, c) => Math.max(m, c.generation), 0);
-      const derivedGen = Math.max(storedGen, maxChampGen);
-      if (derivedGen > storedGen) {
-        console.warn(`[Monitor] Generation mismatch: evolution_state=${storedGen}, max champion gen=${maxChampGen}. Using ${derivedGen}.`);
-      }
+      const maxAllStratGen = (allStrategies ?? []).reduce((m, s) => Math.max(m, s.generation as number), 0);
+      const derivedGen = Math.max(storedGen, maxChampGen, maxAllStratGen);
       setDisplayGen(derivedGen);
     } else {
       setDisplayGen((evo as EvolutionState | null)?.current_generation ?? 0);
