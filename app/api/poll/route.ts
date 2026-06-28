@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server';
 import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
 import { generatePicks } from '@/lib/evolution/fitness';
 import { scorePendingPredictions } from '@/lib/score-predictions';
+import { scoreDailyPickPlays, syncDailyPickCounter } from '@/lib/daily-pick-play';
 import type { StrategyGenome } from '@/lib/evolution/genome';
 import type { Game } from '@/lib/supabase';
 import { notifyBigWin } from '@/lib/notify';
@@ -83,6 +84,9 @@ export async function POST(req: NextRequest) {
     // inserted earlier by sync's backfill that never got scored.
     const scoredCount = await scorePendingPredictions(db);
 
+    // 4a. Score the daily pick's own window plays (separate, capped table).
+    await scoreDailyPickPlays(db);
+
     // 4b. Notify on big wins (prize >= $10) from just-scored predictions
     if (scoredCount > 0) {
       const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
@@ -121,12 +125,11 @@ export async function POST(req: NextRequest) {
     const today = new Date().toLocaleDateString('en-CA');
     const { data: dailyPick } = await db
       .from('daily_picks')
-      .select('strategy_id,picks,bonus_type,best_hour,recommended_games,games_played,status,spot_count')
+      .select('strategy_id,picks,bonus_type,best_hour,recommended_games,games_played,status,spot_count,wager_per_game')
       .eq('pick_date', today)
       .maybeSingle();
 
     const nowET = (new Date().getUTCHours() - 4 + 24) % 24;
-    const dailyPickStrategyId = dailyPick?.strategy_id as number | null;
     const inDailyWindow = dailyPick
       && dailyPick.best_hour != null
       && nowET >= (dailyPick.best_hour as number)
@@ -152,19 +155,10 @@ export async function POST(req: NextRequest) {
         const genome = s.genome as StrategyGenome;
         const commitmentLen = genome.commitment_games ?? 5;
 
-        // Daily pick strategy only plays during its best_hour window
-        if (dailyPickStrategyId != null && sid === dailyPickStrategyId) {
-          if (inDailyWindow && dailyPick) {
-            picksPerStrategy.set(sid, {
-              picks: dailyPick.picks as number[],
-              bonusType: dailyPick.bonus_type as string,
-              spotCount: dailyPick.spot_count as number,
-            });
-          }
-          // Outside window: skip this strategy entirely
-          continue;
-        }
-
+        // Every promoted strategy — including whichever one backs today's daily
+        // pick — runs its normal continuous shadow play here. The daily pick is
+        // tracked separately (below) in daily_pick_plays so it can be capped and
+        // reported without disturbing this unbounded fitness stream.
         const remaining = (s.commitment_remaining as number) ?? 0;
         const currentPicks = s.current_picks as number[] | null;
 
@@ -219,22 +213,34 @@ export async function POST(req: NextRequest) {
         `Committed predictions for games #${baseNextGame}–#${baseNextGame + LOOKAHEAD - 1} (${promoted.length} strategies × ${LOOKAHEAD} games)`,
         { game_num_start: baseNextGame, game_num_end: baseNextGame + LOOKAHEAD - 1, count: allPredictions.length });
 
-      // Track daily pick games played
+      // Daily pick: bounded, window-only shadow play, tracked in its own table.
+      // One play committed per poll cycle for the next game, hard-capped at
+      // recommended_games per day. Fully separate from the champion's live_results
+      // stream above, so the cap never touches the champion's evolution play.
       if (inDailyWindow && dailyPick) {
-        const newPlayed = ((dailyPick.games_played as number) ?? 0) + 1;
-        const newStatus = newPlayed >= (dailyPick.recommended_games as number) ? 'complete' : 'playing';
-        await db.from('daily_picks')
-          .update({ games_played: newPlayed, status: newStatus })
+        const { count: playedSoFar } = await db
+          .from('daily_pick_plays')
+          .select('id', { count: 'exact', head: true })
           .eq('pick_date', today);
 
-        // When session completes, cancel pre-committed lookahead slots that
-        // haven't resolved yet — prevents the LOOKAHEAD=3 buffer from scoring
-        // 1-2 extra games beyond recommended_games.
-        if (newStatus === 'complete' && dailyPickStrategyId != null) {
-          await db.from('pending_predictions')
-            .delete()
-            .eq('strategy_id', dailyPickStrategyId)
-            .eq('scored', false);
+        if ((playedSoFar ?? 0) < (dailyPick.recommended_games as number)) {
+          const costMult = dailyPick.bonus_type === 'super_bonus' ? 3
+            : dailyPick.bonus_type === 'bonus' ? 2 : 1;
+          const wagerPerGame = (dailyPick.wager_per_game as number) ?? costMult;
+          const baseWager = Math.max(1, Math.round(wagerPerGame / costMult));
+
+          await db.from('daily_pick_plays').upsert({
+            pick_date: today,
+            game_num: baseNextGame,
+            spot_count: dailyPick.spot_count,
+            picks: dailyPick.picks,
+            bonus_type: dailyPick.bonus_type,
+            base_wager: baseWager,
+            wager_per_game: wagerPerGame,
+            scored: false,
+          }, { onConflict: 'pick_date,game_num', ignoreDuplicates: true });
+
+          await syncDailyPickCounter(db, today);
         }
       }
     }

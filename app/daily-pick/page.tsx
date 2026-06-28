@@ -112,24 +112,18 @@ export default function DailyPickPage() {
 
     if (!pastPicks || pastPicks.length === 0) return;
 
-    const strategyIds = [...new Set(pastPicks.map(p => p.strategy_id).filter(Boolean))];
-    const { data: liveData } = await supabase
-      .from('live_results')
-      .select('strategy_id, scored_at, picks, matches, prize, pnl, spot_count')
-      .in('strategy_id', strategyIds as number[])
-      .eq('source', 'prediction')
-      .order('scored_at', { ascending: false })
+    // W-L/P&L come exclusively from the daily pick's own scored window plays —
+    // keyed by pick_date, never the champion's continuous live_results stream.
+    const dates = pastPicks.map(p => p.pick_date);
+    const { data: playData } = await supabase
+      .from('daily_pick_plays')
+      .select('pick_date, prize, pnl')
+      .in('pick_date', dates as string[])
+      .eq('scored', true)
       .limit(10000);
 
     const perf: PickPerformance[] = pastPicks.map(dp => {
-      const dayStart = new Date(dp.pick_date + 'T00:00:00');
-      const dayEnd = new Date(dp.pick_date + 'T23:59:59');
-      const dayResults = (liveData ?? []).filter(r =>
-        r.strategy_id === dp.strategy_id &&
-        r.spot_count === dp.spot_count &&
-        new Date(r.scored_at) >= dayStart &&
-        new Date(r.scored_at) <= dayEnd
-      );
+      const dayResults = (playData ?? []).filter(r => r.pick_date === dp.pick_date);
 
       const wagerPerGame = (dp.wager_per_game as number) ?? 1;
       const gamesScored = dayResults.length;

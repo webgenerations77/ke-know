@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase-server';
 import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
 import { runEvolution } from '@/lib/evolution/evolve';
 import { scorePendingPredictions } from '@/lib/score-predictions';
+import { scoreDailyPickPlays } from '@/lib/daily-pick-play';
 import { replayChampions } from '@/lib/replay';
 import { notifyEvolution } from '@/lib/notify';
 
@@ -86,6 +87,9 @@ export async function performSync(db: ReturnType<typeof createServiceClient>): P
     // pending_predictions would sit unscored forever (shown as gaps in the
     // Live Monitor feed) and real_world_plays/pnl would miss them.
     const scoredCount = await scorePendingPredictions(db);
+
+    // Score the daily pick's own window plays against any just-landed games.
+    await scoreDailyPickPlays(db);
 
     // ---- 3. Replay champions against games they missed ----
     let replayCount = 0;
