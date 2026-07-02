@@ -48,6 +48,23 @@ const INTEGER_KEYS = new Set<keyof StrategyGenome>([
   'lookback_games', 'recency_boost_cutoff', 'gap_threshold', 'lookback_step', 'wager', 'commitment_games',
 ]);
 
+/**
+ * Coerce any stored genome to the canonical gene shape: drop legacy/unknown
+ * keys (e.g. pre-overhaul `w_gap`, `streak_weight`, `cluster_bias`) and backfill
+ * any missing gene from a fresh random genome. Without this, breeding operators
+ * that read `GENOME_RANGES[key]` for a dead key hit `undefined[0]` and crash the
+ * whole evolution run — which silently stalled generation advancement.
+ */
+export function normalizeGenome(raw: Partial<StrategyGenome> | null | undefined): StrategyGenome {
+  const g = randomGenome(); // defaults for any missing gene
+  const keys = Object.keys(GENOME_RANGES) as (keyof StrategyGenome)[];
+  for (const key of keys) {
+    const v = raw?.[key];
+    if (v !== undefined && v !== null) (g as any)[key] = v;
+  }
+  return g;
+}
+
 function rand(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
@@ -131,7 +148,7 @@ export function mutateGenome(
   largeMutationProb: number,
   numParams = 2
 ): { genome: StrategyGenome; log: string[] } {
-  const g = { ...genome };
+  const g = normalizeGenome(genome);
   const log: string[] = [];
 
   const shuffled = [...NUMERIC_KEYS].sort(() => Math.random() - 0.5);
@@ -170,11 +187,16 @@ export function mutateGenome(
 }
 
 export function crossoverGenome(a: StrategyGenome, b: StrategyGenome): { genome: StrategyGenome; log: string[] } {
+  // Normalize both parents first so legacy/unknown keys can't reach the
+  // GENOME_RANGES lookup below (a dead key there means `range` is undefined,
+  // and `range[0]` crashes the entire evolution run).
+  a = normalizeGenome(a);
+  b = normalizeGenome(b);
   const g = { ...a };
   const log: string[] = [];
   const ALPHA = 0.3;
 
-  const keys = Object.keys(a) as (keyof StrategyGenome)[];
+  const keys = Object.keys(GENOME_RANGES) as (keyof StrategyGenome)[];
   for (const key of keys) {
     if (key === 'weighting_method' || key === 'bonus_type') {
       if (Math.random() < 0.5) {

@@ -63,7 +63,9 @@ export default function SimulatorPage() {
         supabase.from('strategies').select('id, generation, spot_count, status'),
         supabase.from('evolution_state').select('current_generation, last_run_at').eq('id', 1).single(),
         supabase.from('games').select('game_num', { count: 'exact', head: true }),
-        supabase.from('strategy_results').select('generation, spot_count, fitness_score').order('generation', { ascending: true }).limit(2000),
+        // Server-side max fitness per (generation, spot) — avoids the 1000-row
+        // response cap that previously truncated this chart to gens 1–2.
+        supabase.rpc('fitness_by_generation'),
         supabase.from('system_events').select('occurred_at').eq('event_type', 'simulator_replay').order('occurred_at', { ascending: false }).limit(1),
       ]);
 

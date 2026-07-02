@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useToast } from '@/components/Toast';
 import { supabase } from '@/lib/supabase';
+import { DAILY_PICK_WINDOW_MINUTES } from '@/lib/daily-pick-window';
 
 interface DailyPick {
   id: number;
@@ -50,6 +51,17 @@ function fmtHour(h: number): string {
   return `${display}:00 ${suffix}`;
 }
 
+// Formats the window's closing time, which may land on a half hour (e.g. a 90-min
+// window opening at 6:00 PM closes at 7:30 PM).
+function fmtWindowEnd(startHour: number): string {
+  const totalMin = startHour * 60 + DAILY_PICK_WINDOW_MINUTES;
+  const h24 = Math.floor(totalMin / 60) % 24;
+  const m = totalMin % 60;
+  const suffix = h24 >= 12 ? 'PM' : 'AM';
+  const display = h24 > 12 ? h24 - 12 : h24 === 0 ? 12 : h24;
+  return `${display}:${String(m).padStart(2, '0')} ${suffix}`;
+}
+
 function fmtCountdown(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(s / 3600);
@@ -65,7 +77,7 @@ function windowStatus(bestHour: number | null, now: Date) {
   const start = new Date(now);
   start.setHours(bestHour, 0, 0, 0);
   const end = new Date(now);
-  end.setHours(bestHour + 1, 0, 0, 0);
+  end.setHours(bestHour, DAILY_PICK_WINDOW_MINUTES, 0, 0);
 
   if (now < start) {
     return { state: 'before' as const, label: `Opens in ${fmtCountdown(start.getTime() - now.getTime())}` };
@@ -358,8 +370,8 @@ export default function DailyPickPage() {
               </div>
               <p className="text-[10px] text-slate-600 mt-1.5">
                 {playStatus === 'complete'
-                  ? `Arthur played ${gamesPlayed} games during the ${pick.best_hour != null ? `${fmtHour(pick.best_hour)}–${fmtHour(pick.best_hour + 1)}` : ''} window.`
-                  : `Arthur plays these picks only during the ${pick.best_hour != null ? `${fmtHour(pick.best_hour)}–${fmtHour(pick.best_hour + 1)}` : 'recommended'} window.`
+                  ? `Arthur played ${gamesPlayed} games during the ${pick.best_hour != null ? `${fmtHour(pick.best_hour)}–${fmtWindowEnd(pick.best_hour)}` : ''} window.`
+                  : `Arthur plays these picks only during the ${pick.best_hour != null ? `${fmtHour(pick.best_hour)}–${fmtWindowEnd(pick.best_hour)}` : 'recommended'} window.`
                 }
               </p>
             </>
@@ -373,7 +385,7 @@ export default function DailyPickPage() {
           <div className="flex-1 w-full sm:w-auto">
             <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] mb-1">Best Play Window</p>
             <p className="text-2xl sm:text-xl font-bold">
-              {fmtHour(pick.best_hour)} – {fmtHour(pick.best_hour + 1)}
+              {fmtHour(pick.best_hour)} – {fmtWindowEnd(pick.best_hour)}
             </p>
             <p className="text-xs text-slate-600 mt-1">Eastern Time</p>
           </div>
@@ -451,7 +463,10 @@ export default function DailyPickPage() {
                   </thead>
                   <tbody>
                     {history.map(h => {
-                      const baseW = 1;
+                      // Arthur wagers a fixed amount every game: base × bonus multiplier.
+                      // Show the real per-game wager, not a hardcoded $1 → range.
+                      const bonusMult = h.bonus_type === 'super_bonus' ? 3 : h.bonus_type === 'bonus' ? 2 : 1;
+                      const baseW = bonusMult > 1 ? Math.max(1, Math.round(h.wager_per_game / bonusMult)) : h.wager_per_game;
                       const bonusLbl = h.bonus_type === 'super_bonus' ? 'SB' : h.bonus_type === 'bonus' ? 'B' : '';
                       return (
                         <tr key={h.pick_date} className="border-b border-[#1e1e24] hover:bg-[#1e1e24]">
@@ -469,9 +484,9 @@ export default function DailyPickPage() {
                               ))}
                             </div>
                           </td>
-                          <td className="px-3 py-2 text-center hidden sm:table-cell text-slate-400">
-                            <span className="text-slate-500">${baseW}</span>
-                            {h.wager_per_game > baseW && <span className="text-slate-300">→${h.wager_per_game}</span>}
+                          <td className="px-3 py-2 text-center hidden sm:table-cell text-slate-400 whitespace-nowrap">
+                            <span className="text-slate-300">${h.wager_per_game}</span>
+                            {bonusMult > 1 && <span className="text-slate-600 text-[9px] ml-0.5">(${baseW}×{bonusMult})</span>}
                           </td>
                           <td className="px-3 py-2 text-center text-slate-400">
                             {h.games_played}/{h.recommended_games}

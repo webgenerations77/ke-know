@@ -96,7 +96,7 @@ Arthur is a stateless AI personality on the Live Monitor page. His thought engin
 - `/daily-pick` — Arthur's daily recommended play
 - `/spot-advisor` — Spot count recommendations
 - `/learning-center` — Simulator: live sessions + historical backtests using champion strategies. Results feed into `live_results` for fitness scoring. Auto-replay runs during sync.
-- `/number-cloud`, `/frequency`, `/pair-patterns`, `/draw-history` — Data exploration
+- `/frequency`, `/pair-patterns`, `/draw-history` — Data exploration
 
 ### Simulator & Replay System (`lib/replay.ts`)
 

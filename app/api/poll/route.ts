@@ -4,6 +4,7 @@ import { fetchDrawings, parseDrawing } from '@/lib/lottery-api';
 import { generatePicks } from '@/lib/evolution/fitness';
 import { scorePendingPredictions } from '@/lib/score-predictions';
 import { scoreDailyPickPlays, syncDailyPickCounter } from '@/lib/daily-pick-play';
+import { DAILY_PICK_WINDOW_MINUTES } from '@/lib/daily-pick-window';
 import type { StrategyGenome } from '@/lib/evolution/genome';
 import type { Game } from '@/lib/supabase';
 import { notifyBigWin } from '@/lib/notify';
@@ -129,11 +130,15 @@ export async function POST(req: NextRequest) {
       .eq('pick_date', today)
       .maybeSingle();
 
-    const nowET = (new Date().getUTCHours() - 4 + 24) % 24;
+    // Fractional ET hour (with minutes) so the window can span 90 minutes, not
+    // just a whole clock hour — otherwise 20 games can't fit before it closes.
+    const nowEtMinutes = (new Date().getUTCHours() * 60 + new Date().getUTCMinutes()) - 4 * 60;
+    const nowET = ((nowEtMinutes % (24 * 60)) + 24 * 60) % (24 * 60) / 60;
+    const windowStartHr = dailyPick?.best_hour as number | null;
     const inDailyWindow = dailyPick
-      && dailyPick.best_hour != null
-      && nowET >= (dailyPick.best_hour as number)
-      && nowET < (dailyPick.best_hour as number) + 1
+      && windowStartHr != null
+      && nowET >= windowStartHr
+      && nowET < windowStartHr + DAILY_PICK_WINDOW_MINUTES / 60
       && ((dailyPick.games_played as number) ?? 0) < (dailyPick.recommended_games as number)
       && dailyPick.status !== 'complete';
 
