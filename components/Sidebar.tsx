@@ -10,7 +10,6 @@ const NAV = [
   { href: '/daily-pick', label: 'Daily Pick', icon: '★' },
   { href: '/spot-advisor', label: 'Spot Advisor', icon: '◈' },
   { href: '/learning-center', label: 'Simulator', icon: '▶' },
-  { href: '/number-cloud', label: 'Number Cloud', icon: '☁' },
   { href: '/frequency', label: 'Frequency', icon: '≡' },
   { href: '/pair-patterns', label: 'Pair Patterns', icon: '◷' },
   { href: '/draw-history', label: 'Draw History', icon: '⊞' },

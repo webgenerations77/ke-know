@@ -78,6 +78,18 @@ const MOOD_META: Record<ArthurMood, {
 
 const MOODS_ORDER: ArthurMood[] = ['awakening', 'curious', 'focused', 'optimistic', 'cautious', 'frustrated'];
 
+// Short one-liners surfaced on the splash itself (distinct from the longer panel
+// copy). A random one is chosen per load so the same tier never reads identically
+// two visits in a row.
+const MOOD_TAGLINES: Record<ArthurMood, string[]> = {
+  awakening: ['Waiting for his first evolution.', 'Dormant — no generations yet.', 'Ready to wake up and learn.'],
+  curious: ['Reading today\'s draws.', 'Gathering the early signal.', 'Cataloguing patterns before he commits.'],
+  focused: ['Locked in on the data.', 'Trusting the math, holding steady.', 'Neither hot nor cold — just working.'],
+  optimistic: ['The edge is showing today.', 'Strategies are firing.', 'Green session — confidence is up.'],
+  cautious: ['Slightly underwater, watching closely.', 'Small losses — no alarm yet.', 'In watchdog mode.'],
+  frustrated: ['Rough stretch of draws.', 'Documenting the variance, sharpening next gen.', 'Down today, but adapting.'],
+};
+
 // SVG face avatars — each mood has a distinct expression drawn in a 32×32 viewBox.
 function MoodFace({ mood, size = 40 }: { mood: ArthurMood; size?: number }) {
   const { stroke, bg } = MOOD_META[mood];
@@ -163,6 +175,7 @@ interface ArthurStatus {
   totalGames: number | null;
   lastRunAt: string | null;
   mood: ArthurMood;
+  thought: string;
 }
 
 function timeAgo(iso: string | null): string {
@@ -178,19 +191,40 @@ function computeMood(
   generation: number | null,
   lastRunAt: string | null,
   todayTotal: number,
-  todayWins: number,
   todayPnl: number,
+  recentTotal: number,
+  recentPnl: number,
+  championFitness: number | null,
 ): ArthurMood {
   if (!generation) return 'awakening';
-  if (todayTotal < MOOD_THRESHOLDS.minPlays) {
+
+  // Prefer today's signal once it has enough plays; otherwise fall back to the
+  // trailing week so the mood reflects real recent performance instead of a
+  // static "curious/focused" placeholder every morning before games are scored.
+  const haveToday = todayTotal >= MOOD_THRESHOLDS.minPlays;
+  const ppg = haveToday
+    ? todayPnl / todayTotal
+    : recentTotal >= MOOD_THRESHOLDS.minPlays
+      ? recentPnl / recentTotal
+      : null;
+
+  if (ppg === null) {
     const mins = lastRunAt ? (Date.now() - new Date(lastRunAt).getTime()) / 60000 : 9999;
     return mins < MOOD_THRESHOLDS.recentEvoMins ? 'focused' : 'curious';
   }
-  // Use per-game P&L so mood scales correctly regardless of total play volume
-  const ppg = todayPnl / todayTotal;
-  if (ppg >= MOOD_THRESHOLDS.optimistic) return 'optimistic';
-  if (ppg >= MOOD_THRESHOLDS.focused) return 'focused';
-  if (ppg >= MOOD_THRESHOLDS.cautious) return 'cautious';
+
+  // The current best champion's fitness nudges the tier: a positive-edge champion
+  // shades Arthur optimistic; a deeply negative one shades him cautious. This
+  // keeps the mood moving with the evolution's real state, not just today's P&L.
+  const fitnessNudge = championFitness == null ? 0
+    : championFitness > 0.5 ? 0.10
+    : championFitness < -0.5 ? -0.10
+    : 0;
+  const adj = ppg + fitnessNudge;
+
+  if (adj >= MOOD_THRESHOLDS.optimistic) return 'optimistic';
+  if (adj >= MOOD_THRESHOLDS.focused) return 'focused';
+  if (adj >= MOOD_THRESHOLDS.cautious) return 'cautious';
   return 'frustrated';
 }
 
@@ -198,7 +232,7 @@ export default function SplashPage() {
   const router = useRouter();
   const [phase, setPhase] = useState(0);
   const [arthur, setArthur] = useState<ArthurStatus>({
-    generation: null, totalGames: null, lastRunAt: null, mood: 'awakening',
+    generation: null, totalGames: null, lastRunAt: null, mood: 'awakening', thought: '',
   });
   const [moodPanelOpen, setMoodPanelOpen] = useState(false);
 
@@ -215,19 +249,41 @@ export default function SplashPage() {
     async function load() {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
-      const [{ data: evo }, { count: gamesCount }, { data: todayResults }] = await Promise.all([
+      const weekStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const [{ data: evo }, { count: gamesCount }, { data: weekResults }, { data: maxStratRow }, { data: latestPick }] = await Promise.all([
         supabase.from('evolution_state').select('current_generation,last_run_at').eq('id', 1).single(),
         supabase.from('games').select('game_num', { count: 'exact', head: true }),
-        supabase.from('live_results').select('prize,pnl').gte('scored_at', todayStart.toISOString()),
+        // Pull the trailing week once; today's slice is derived client-side. This
+        // gives the mood a real fallback signal when today is still thin.
+        supabase.from('live_results').select('pnl,scored_at').gte('scored_at', weekStart.toISOString()),
+        // Match the Live Monitor: the displayed generation is the max across the
+        // stored counter and any non-retired strategy, so a new generation shows
+        // even before evolution_state is finalized.
+        supabase.from('strategies').select('generation').neq('status', 'retired')
+          .order('generation', { ascending: false }).limit(1).maybeSingle(),
+        // Best champion's fitness (stored on the daily pick) — nudges the mood.
+        supabase.from('daily_picks').select('fitness_score')
+          .order('pick_date', { ascending: false }).limit(1).maybeSingle(),
       ]);
-      const todayTotal = todayResults?.length ?? 0;
-      const todayWins = todayResults?.filter(r => (r.prize ?? 0) > 0).length ?? 0;
-      const todayPnl = todayResults?.reduce((sum, r) => sum + (r.pnl ?? 0), 0) ?? 0;
-      const generation = evo?.current_generation ?? null;
+      const week = weekResults ?? [];
+      const todayIso = todayStart.toISOString();
+      const todayRows = week.filter(r => (r.scored_at as string) >= todayIso);
+      const todayTotal = todayRows.length;
+      const todayPnl = todayRows.reduce((sum, r) => sum + (r.pnl ?? 0), 0);
+      const recentTotal = week.length;
+      const recentPnl = week.reduce((sum, r) => sum + (r.pnl ?? 0), 0);
+      const championFitness = (latestPick?.fitness_score as number | undefined) ?? null;
+      const storedGen = evo?.current_generation ?? null;
+      const maxStratGen = (maxStratRow?.generation as number | undefined) ?? null;
+      const generation = (storedGen == null && maxStratGen == null)
+        ? null
+        : Math.max(storedGen ?? 0, maxStratGen ?? 0);
       const lastRunAt = evo?.last_run_at ?? null;
+      const mood = computeMood(generation, lastRunAt, todayTotal, todayPnl, recentTotal, recentPnl, championFitness);
+      const taglines = MOOD_TAGLINES[mood];
       setArthur({
-        generation, totalGames: gamesCount, lastRunAt,
-        mood: computeMood(generation, lastRunAt, todayTotal, todayWins, todayPnl),
+        generation, totalGames: gamesCount, lastRunAt, mood,
+        thought: taglines[Math.floor(Math.random() * taglines.length)],
       });
     }
     load();
@@ -349,6 +405,11 @@ export default function SplashPage() {
                 <MoodFace mood={arthur.mood} size={34} />
               </button>
             </div>
+
+            {/* Rotating one-liner — varies per load so the mood never reads stale */}
+            {arthur.thought && (
+              <p className="text-xs text-slate-500 italic max-w-xs text-center">{arthur.thought}</p>
+            )}
 
             {/* Mood explanation panel */}
             {moodPanelOpen && (

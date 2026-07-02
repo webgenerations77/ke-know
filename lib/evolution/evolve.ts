@@ -1,7 +1,7 @@
 import { createServiceClient } from '@/lib/supabase-server';
 import type { Game } from '@/lib/supabase';
 import {
-  randomGenome, heuristicGenome, mutateGenome, crossoverGenome, type StrategyGenome,
+  randomGenome, heuristicGenome, mutateGenome, crossoverGenome, normalizeGenome, type StrategyGenome,
 } from './genome';
 import {
   crossValidateStrategy, computeFitness, generatePicks, jaccardSimilarity,
@@ -190,7 +190,7 @@ export async function runEvolution(): Promise<{
       childRows.push({
         generation: nextGen,
         spot_count: spotCount,
-        genome: { ...survivors[i].genome },
+        genome: normalizeGenome(survivors[i].genome),
         status: 'active',
         parent_ids: [survivors[i].id],
         mutation_log: { action: 'elite', details: [`elite carry-forward of #${survivors[i].id}`] },

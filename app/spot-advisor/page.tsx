@@ -68,6 +68,13 @@ function fmt(n: number) {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
 
+function fmtAdviceDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 function fmtEv(ev: number, wager: number) {
   return (ev * wager).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -401,6 +408,19 @@ export default function SpotAdvisorPage() {
                     {rec.evoChampion.result.picks_snapshot.map(n => <Ball key={n} n={n} />)}
                   </div>
                 )}
+
+                {/* When this advice was generated — the champion's last evaluation
+                    (evolution picks) or "live" for EV-derived fallbacks. */}
+                {(() => {
+                  const adviceDate = rec.source === 'evolution'
+                    ? fmtAdviceDate(rec.evoChampion?.result?.evaluated_at ?? rec.evoChampion?.strategy.promoted_at)
+                    : null;
+                  return (
+                    <p className="text-[10px] text-slate-600 pt-1 border-t border-[#1e1e24] mt-1">
+                      {adviceDate ? `Advice as of ${adviceDate}` : 'Updated live from current data'}
+                    </p>
+                  );
+                })()}
               </div>
             );
           })}
